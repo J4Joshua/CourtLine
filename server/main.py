@@ -119,6 +119,8 @@ async def publish(ws: WebSocket):
     try:
         while True:
             msg = await ws.receive()
+            if msg["type"] == "websocket.disconnect":
+                raise WebSocketDisconnect(msg.get("code", 1000))
             if msg.get("bytes") is not None:
                 frames += 1
                 if frames % 24 == 0:  # ~once per second at 24fps
@@ -150,6 +152,8 @@ async def publish_audio(ws: WebSocket):
     try:
         while True:
             msg = await ws.receive()
+            if msg["type"] == "websocket.disconnect":
+                raise WebSocketDisconnect(msg.get("code", 1000))
             if msg.get("text") is not None and header is None:
                 header = json.loads(msg["text"])
                 print(f"[/publish-audio] header: {header}")
@@ -180,7 +184,9 @@ async def agent_audio(ws: WebSocket):
         #   await ws.send_bytes(pcm)
         while True:
             # Keep the socket open; nothing to push in the stub.
-            await ws.receive()
+            msg = await ws.receive()
+            if msg["type"] == "websocket.disconnect":
+                raise WebSocketDisconnect(msg.get("code", 1000))
     except WebSocketDisconnect:
         print("[/agent-audio] disconnected")
     finally:

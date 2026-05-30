@@ -25,79 +25,52 @@ function fileLabel(name) {
   if (ext === 'txt') return 'TXT';
   return 'FILE';
 }
-
-// ── Icons (inline SVG) ────────────────────────────────────────────────────────
-
-function IconCheck({ color = '#868e96' }) {
-  return (
-    <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
-      <path d="M2 6.5l3.2 3.2L11 3" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-    </svg>
-  );
+function emotionBadgeClass(emotion) {
+  const e = (emotion || '').toLowerCase();
+  if (['fear','angry','disgust','contempt'].includes(e)) return 'em-red';
+  if (e === 'surprise') return 'em-amber';
+  return 'em-gray';
 }
+function verdictFromText(utterance) {
+  const t = (utterance || '').toLowerCase();
+  if (/\bfalse\b|impossible|closes at|closed at|wasn't open|not open|wrong|incorrect/.test(t)) return 'FALSE';
+  if (/\btrue\b|confirmed|correct|accurate|verified/.test(t)) return 'TRUE';
+  if (/unverifiable|can't confirm|could not verify|unclear|proceed with caution/.test(t)) return 'UNVERIFIABLE';
+  return null;
+}
+
+// ── Icons ─────────────────────────────────────────────────────────────────────
+
 function IconBook() {
   return (
-    <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
-      <rect x="1.5" y="1" width="10" height="11" rx="1.5" stroke="#7048e8" strokeWidth="1.4"/>
-      <path d="M3.5 4.5h6M3.5 7h6M3.5 9.5h4" stroke="#7048e8" strokeWidth="1.2" strokeLinecap="round"/>
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+      <rect x="1.5" y="1" width="11" height="12" rx="1.5" stroke="#7048e8" strokeWidth="1.5"/>
+      <path d="M4 4.5h6M4 7h6M4 9.5h4" stroke="#7048e8" strokeWidth="1.2" strokeLinecap="round"/>
     </svg>
   );
 }
 function IconSearch() {
   return (
-    <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
-      <circle cx="5.5" cy="5.5" r="3.5" stroke="#0c7a5a" strokeWidth="1.4"/>
-      <path d="M8.5 8.5l2.8 2.8" stroke="#0c7a5a" strokeWidth="1.4" strokeLinecap="round"/>
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+      <circle cx="6" cy="6" r="4" stroke="#0c7a5a" strokeWidth="1.5"/>
+      <path d="M9.5 9.5l3 3" stroke="#0c7a5a" strokeWidth="1.5" strokeLinecap="round"/>
     </svg>
   );
 }
 function IconBubble() {
   return (
-    <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
-      <path d="M1.5 1.5h10a.5.5 0 01.5.5v6a.5.5 0 01-.5.5H7.5l-2 2-2-2H1.5a.5.5 0 01-.5-.5V2a.5.5 0 01.5-.5z" stroke="#1a1a2e" strokeWidth="1.4"/>
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+      <path d="M1.5 1.5h11a.5.5 0 01.5.5v7a.5.5 0 01-.5.5H8L6 12l-2-2.5H1.5A.5.5 0 011 9V2a.5.5 0 01.5-.5z" stroke="#1a1a2e" strokeWidth="1.5"/>
     </svg>
   );
 }
 function IconEye() {
   return (
-    <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
-      <path d="M1 6.5C2.5 3.5 5 2 6.5 2S10.5 3.5 12 6.5C10.5 9.5 8 11 6.5 11S2.5 9.5 1 6.5z" stroke="#b07d00" strokeWidth="1.4"/>
-      <circle cx="6.5" cy="6.5" r="1.5" stroke="#b07d00" strokeWidth="1.4"/>
-    </svg>
-  );
-}
-function IconCamera() {
-  return (
     <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-      <rect x="1" y="3.5" width="12" height="8" rx="1.5" stroke="currentColor" strokeWidth="1.4"/>
-      <circle cx="7" cy="7.5" r="2" stroke="currentColor" strokeWidth="1.4"/>
-      <path d="M4.5 3.5l.8-1.5h3.4l.8 1.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
+      <path d="M1 7C2.5 4 5 2.5 7 2.5S11.5 4 13 7C11.5 10 9 11.5 7 11.5S2.5 10 1 7z" stroke="#b07d00" strokeWidth="1.5"/>
+      <circle cx="7" cy="7" r="2" stroke="#b07d00" strokeWidth="1.5"/>
     </svg>
   );
-}
-
-// Derive accent class for decision cards
-function decisionAccent(tool, utterance) {
-  if (tool === 'fact_check') {
-    if (/false|impossible|closed|closes|doesn't|doesn't|not open|wrong|mismatch/i.test(utterance)) return 'accent-red';
-    if (/true|correct|confirmed|accurate/i.test(utterance)) return 'accent-green';
-    return 'accent-gray';
-  }
-  if (tool === 'recall') return 'accent-purple';
-  if (tool === 'search') return 'accent-teal';
-  if (tool === 'camera') return 'accent-amber';
-  return 'accent-navy';
-}
-function DecisionIcon({ tool, utterance }) {
-  if (tool === 'fact_check') {
-    const isFalse = /false|impossible|closed|closes|doesn't|doesn't|not open|wrong|mismatch/i.test(utterance);
-    const isTrue  = /true|correct|confirmed|accurate/i.test(utterance);
-    return <IconCheck color={isFalse ? '#c92a2a' : isTrue ? '#2b8a3e' : '#adb5bd'} />;
-  }
-  if (tool === 'recall')  return <IconBook />;
-  if (tool === 'search')  return <IconSearch />;
-  if (tool === 'camera')  return <IconEye />;
-  return <IconBubble />;
 }
 
 // ── WebSocket hook ────────────────────────────────────────────────────────────
@@ -127,12 +100,23 @@ function useWebSocket(url, onMessage, onOpen) {
   return wsRef;
 }
 
-// ── Sidebar character ─────────────────────────────────────────────────────────
+// ── Step-page character (right side, static bubble) ──────────────────────────
+
+function StepCharacter({ bubble }) {
+  return (
+    <div className="step-char-side">
+      <div className="step-char-bubble">{bubble}</div>
+      <img src={lawyerImg} alt="Sidebar" className="step-char-img" />
+    </div>
+  );
+}
+
+// ── Session character (bottom-right, float, live bubble) ─────────────────────
 
 function SidebarCharacter({ latestDecision }) {
-  const [bouncing, setBouncing] = useState(false);
-  const [bubble, setBubble] = useState('');
-  const prevRef = useRef(null);
+  const [bubble, setBubble] = useState('Monitoring...');
+  const prevRef  = useRef(null);
+  const timerRef = useRef(null);
 
   useEffect(() => {
     if (!latestDecision) return;
@@ -140,23 +124,22 @@ function SidebarCharacter({ latestDecision }) {
     if (key === prevRef.current) return;
     prevRef.current = key;
 
-    setBouncing(true);
-    // Show the verdict text in the bubble (trim to ~120 chars)
-    const text = latestDecision.utterance.replace(/^\(.*?\)\s*/, '');
-    if (text) setBubble(text.length > 120 ? text.slice(0, 117) + '…' : text);
+    // Strip internal "(tool fired)" messages — only show spoken verdicts
+    const raw = latestDecision.utterance.replace(/^\(.*?\)\s*/, '').trim();
+    if (!raw) return;
 
-    setTimeout(() => setBouncing(false), 500);
-    setTimeout(() => setBubble(''), 4000);
+    const text = raw.length > 130 ? raw.slice(0, 127) + '…' : raw;
+    setBubble(text);
+    clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => setBubble('Monitoring...'), 5000);
   }, [latestDecision]);
+
+  useEffect(() => () => clearTimeout(timerRef.current), []);
 
   return (
     <div className="character-wrap">
-      {bubble && <div className="character-bubble">{bubble}</div>}
-      <img
-        src={lawyerImg}
-        alt="Sidebar"
-        className={`character-img${bouncing ? ' character-bounce' : ''}`}
-      />
+      <div className="character-bubble">{bubble}</div>
+      <img src={lawyerImg} alt="Sidebar" className="character-img" />
     </div>
   );
 }
@@ -170,31 +153,34 @@ function OpenCasePage({ onNext }) {
   return (
     <div className="step-page">
       <div className="step-logo">Sidebar</div>
-      <div className="step-card">
-        <div className="step-counter">1 / 3</div>
-        <h2 className="step-title">Open Case</h2>
-        <p className="step-sub">Enter case details to initialize Sidebar.</p>
-        <div className="form-grid">
-          <div className="form-field col-span-2">
-            <label>Case Name *</label>
-            <input placeholder="State v. Johnson" value={form.caseName} onChange={set('caseName')} />
+      <div className="step-layout">
+        <div className="step-card">
+          <div className="step-counter">1 / 3</div>
+          <h2 className="step-title">Open Case</h2>
+          <p className="step-sub">Enter case details to initialize Sidebar.</p>
+          <div className="form-grid">
+            <div className="form-field col-span-2">
+              <label>Case Name *</label>
+              <input placeholder="State v. Johnson" value={form.caseName} onChange={set('caseName')} />
+            </div>
+            <div className="form-field">
+              <label>Defendant Name</label>
+              <input placeholder="Full legal name" value={form.defendantName} onChange={set('defendantName')} />
+            </div>
+            <div className="form-field">
+              <label>Jurisdiction</label>
+              <input placeholder="California Superior Court" value={form.jurisdiction} onChange={set('jurisdiction')} />
+            </div>
+            <div className="form-field col-span-2">
+              <label>Charges / Allegations</label>
+              <input placeholder="e.g. First-degree murder, conspiracy to commit fraud" value={form.charges} onChange={set('charges')} />
+            </div>
           </div>
-          <div className="form-field">
-            <label>Defendant Name</label>
-            <input placeholder="Full legal name" value={form.defendantName} onChange={set('defendantName')} />
-          </div>
-          <div className="form-field">
-            <label>Jurisdiction</label>
-            <input placeholder="California Superior Court" value={form.jurisdiction} onChange={set('jurisdiction')} />
-          </div>
-          <div className="form-field col-span-2">
-            <label>Charges / Allegations</label>
-            <input placeholder="e.g. First-degree murder, conspiracy to commit fraud" value={form.charges} onChange={set('charges')} />
-          </div>
+          <button className="btn-primary" disabled={!form.caseName.trim()} onClick={() => form.caseName.trim() && onNext(form)}>
+            Open Case →
+          </button>
         </div>
-        <button className="btn-primary" disabled={!form.caseName.trim()} onClick={() => form.caseName.trim() && onNext(form)}>
-          Open Case →
-        </button>
+        <StepCharacter bubble="Let's build your case." />
       </div>
     </div>
   );
@@ -244,57 +230,61 @@ function UploadBriefsPage({ caseInfo, onNext }) {
   return (
     <div className="step-page">
       <div className="step-logo">Sidebar</div>
-      <div className="step-card step-card-wide">
-        <div className="step-counter">2 / 3</div>
-        <h2 className="step-title">Upload Briefs</h2>
-        <p className="step-sub">
-          Briefing Sidebar for <strong>{caseInfo.caseName}</strong>. Upload documents and add notes —
-          Sidebar will cross-reference these against live testimony.
-        </p>
-        <div
-          className={`dropzone${dragging ? ' drag-over' : ''}`}
-          onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-          onDragLeave={() => setDragging(false)}
-          onDrop={handleDrop}
-          onClick={() => inputRef.current?.click()}
-        >
-          <div className="dropzone-arrow">↑</div>
-          <div className="dropzone-label">Drop files here or click to browse</div>
-          <div className="dropzone-hint">PDF · TXT · DOCX · JPG · PNG</div>
-          <input ref={inputRef} type="file" multiple accept=".pdf,.txt,.docx,.jpg,.jpeg,.png" style={{ display: 'none' }} onChange={(e) => addFiles(Array.from(e.target.files))} />
+      <div className="step-layout">
+        <div className="step-card step-card-wide">
+          <div className="step-counter">2 / 3</div>
+          <h2 className="step-title">Upload Briefs</h2>
+          <p className="step-sub">
+            Briefing Sidebar for <strong>{caseInfo.caseName}</strong>. Upload documents and add notes —
+            Sidebar will cross-reference these against live testimony.
+          </p>
+          <div
+            className={`dropzone${dragging ? ' drag-over' : ''}`}
+            onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={handleDrop}
+            onClick={() => inputRef.current?.click()}
+          >
+            <div className="dropzone-arrow">↑</div>
+            <div className="dropzone-label">Drop files here or click to browse</div>
+            <div className="dropzone-hint">PDF · TXT · DOCX · JPG · PNG</div>
+            <input ref={inputRef} type="file" multiple accept=".pdf,.txt,.docx,.jpg,.jpeg,.png" style={{ display: 'none' }} onChange={(e) => addFiles(Array.from(e.target.files))} />
+          </div>
+          {files.length > 0 && (
+            <ul className="file-list">
+              {files.map((f) => (
+                <li key={f.id} className="file-item">
+                  <span className={`file-badge fbadge-${fileLabel(f.name).toLowerCase()}`}>{fileLabel(f.name)}</span>
+                  <span className="file-name">{f.name}</span>
+                  <span className="file-size">{formatSize(f.size)}</span>
+                  <button className="file-remove" onClick={() => setFiles((p) => p.filter((x) => x.id !== f.id))}>×</button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <div className="form-field" style={{ marginTop: 20 }}>
+            <label>Additional Notes / Facts</label>
+            <textarea className="notes-area" placeholder="Key facts, witness names, timeline, important context…" rows={4} value={notes} onChange={(e) => setNotes(e.target.value)} />
+          </div>
+          <div className="brief-footer">
+            {saved
+              ? <div className="brief-confirmed">Sidebar briefed ✓</div>
+              : <button className="btn-primary" onClick={handleBrief} disabled={saving}>{saving ? 'Briefing…' : 'Brief Sidebar →'}</button>}
+          </div>
         </div>
-        {files.length > 0 && (
-          <ul className="file-list">
-            {files.map((f) => (
-              <li key={f.id} className="file-item">
-                <span className={`file-badge fbadge-${fileLabel(f.name).toLowerCase()}`}>{fileLabel(f.name)}</span>
-                <span className="file-name">{f.name}</span>
-                <span className="file-size">{formatSize(f.size)}</span>
-                <button className="file-remove" onClick={() => setFiles((p) => p.filter((x) => x.id !== f.id))}>×</button>
-              </li>
-            ))}
-          </ul>
-        )}
-        <div className="form-field" style={{ marginTop: 20 }}>
-          <label>Additional Notes / Facts</label>
-          <textarea className="notes-area" placeholder="Key facts, witness names, timeline, important context…" rows={4} value={notes} onChange={(e) => setNotes(e.target.value)} />
-        </div>
-        <div className="brief-footer">
-          {saved
-            ? <div className="brief-confirmed">Sidebar briefed ✓</div>
-            : <button className="btn-primary" onClick={handleBrief} disabled={saving}>{saving ? 'Briefing…' : 'Brief Sidebar →'}</button>}
-        </div>
+        <StepCharacter bubble="Brief me on everything." />
       </div>
     </div>
   );
 }
 
-// ── Camera panel ──────────────────────────────────────────────────────────────
+// ── Camera panel (auto-monitoring, no manual capture button) ──────────────────
 
-function CameraPanel({ visionResult, onCapture, capturing }) {
-  const videoRef = useRef(null);
-  const canvasRef = useRef(null);
+function CameraPanel({ visionResult, onVisionUpdate }) {
+  const videoRef   = useRef(null);
+  const canvasRef  = useRef(null);
   const [streaming, setStreaming] = useState(false);
+  const [emotionBadge, setEmotionBadge] = useState(null);
 
   const enableCamera = useCallback(() => {
     navigator.mediaDevices.getUserMedia({ video: true, audio: false })
@@ -302,14 +292,42 @@ function CameraPanel({ visionResult, onCapture, capturing }) {
       .catch((err) => console.error('Camera:', err));
   }, []);
 
-  const handleCapture = useCallback(() => {
-    if (!videoRef.current || !canvasRef.current) return;
-    const canvas = canvasRef.current;
-    canvas.width  = videoRef.current.videoWidth  || 640;
-    canvas.height = videoRef.current.videoHeight || 480;
-    canvas.getContext('2d').drawImage(videoRef.current, 0, 0);
-    onCapture(canvas.toDataURL('image/jpeg', 0.8).split(',')[1]);
-  }, [onCapture]);
+  // Capture current frame as base64 JPEG
+  const captureFrame = useCallback(() => {
+    if (!videoRef.current || !canvasRef.current) return null;
+    const cv = canvasRef.current;
+    cv.width  = videoRef.current.videoWidth  || 640;
+    cv.height = videoRef.current.videoHeight || 480;
+    cv.getContext('2d').drawImage(videoRef.current, 0, 0);
+    return cv.toDataURL('image/jpeg', 0.7).split(',')[1];
+  }, []);
+
+  // Auto-monitoring every 5 seconds — cleans up on unmount
+  useEffect(() => {
+    if (!streaming) return;
+
+    const doCapture = async () => {
+      const b64 = captureFrame();
+      if (!b64) return;
+      try {
+        const res  = await fetch(`${API}/analyze-photo`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image_b64: b64 }),
+        });
+        const data = await res.json();
+        if (data.emotion) {
+          setEmotionBadge({ emotion: data.emotion, confidence: data.confidence, flagged: data.flagged });
+        }
+        if (data.analysis) onVisionUpdate(data.analysis);
+      } catch (e) {
+        console.error('Auto-monitor:', e);
+      }
+    };
+
+    const id = setInterval(doCapture, 5000);
+    return () => clearInterval(id);
+  }, [streaming, captureFrame, onVisionUpdate]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <>
@@ -320,15 +338,19 @@ function CameraPanel({ visionResult, onCapture, capturing }) {
           {!streaming && <button className="btn-enable-camera" onClick={enableCamera}>Enable Camera</button>}
         </div>
         <canvas ref={canvasRef} style={{ display: 'none' }} />
-        <button className="btn-capture" onClick={handleCapture} disabled={!streaming || capturing}>
-          <IconCamera />
-          {capturing ? 'Analyzing…' : 'Capture & Analyze'}
-        </button>
+
+        {emotionBadge && (
+          <div className={`emotion-badge ${emotionBadgeClass(emotionBadge.emotion)}`}>
+            {emotionBadge.emotion.toUpperCase()} {emotionBadge.confidence}%
+            {emotionBadge.flagged && <span className="em-flag"> !</span>}
+          </div>
+        )}
+
         <div className="vision-card">
           <div className="vision-card-label">Demeanor</div>
           {visionResult
             ? <div className="vision-card-text">{visionResult}</div>
-            : <div className="vision-card-empty">No capture yet</div>}
+            : <div className="vision-card-empty">Monitoring…</div>}
         </div>
       </div>
     </>
@@ -374,6 +396,37 @@ function TranscriptPanel({ entries }) {
 
 // ── Decisions panel ───────────────────────────────────────────────────────────
 
+function DecisionCard({ d }) {
+  const tool = d.tool_fired || 'direct';
+  // verdict may come from the server payload or be parsed from the utterance
+  const verdict = d.verdict || (tool === 'fact_check' ? verdictFromText(d.utterance) : null);
+
+  const toolIcon = {
+    recall:     <IconBook />,
+    search:     <IconSearch />,
+    camera:     <IconEye />,
+    fact_check: null,
+    direct:     <IconBubble />,
+  }[tool] ?? <IconBubble />;
+
+  return (
+    <div className={`decision-card dc-${tool.replace('_', '-')}`}>
+      <div className="dc-top">
+        <span className={`dc-tool-badge tb-${tool.replace('_', '-')}`}>
+          {toolIcon}
+          {tool.replace('_', ' ').toUpperCase()}
+        </span>
+        {verdict && (
+          <span className={`dc-verdict vd-${verdict.toLowerCase()}`}>{verdict}</span>
+        )}
+        <span className="decision-ts">{formatTs(d.timestamp)}</span>
+      </div>
+      {d.claim && <div className="dc-claim">"{d.claim}"</div>}
+      <div className="decision-utterance">{d.utterance}</div>
+    </div>
+  );
+}
+
 function DecisionsPanel({ decisions }) {
   const endRef = useRef(null);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [decisions]);
@@ -383,16 +436,7 @@ function DecisionsPanel({ decisions }) {
       <div className="panel-header">Sidebar Intel</div>
       <div className="decisions-scroll">
         {decisions.length === 0 && <div className="panel-empty">Sidebar interventions will appear here.</div>}
-        {decisions.map((d, i) => (
-          <div key={i} className={`decision-card ${decisionAccent(d.tool_fired, d.utterance)}`}>
-            <div className="decision-header">
-              <DecisionIcon tool={d.tool_fired} utterance={d.utterance} />
-              <span className="decision-tool-label">{d.tool_fired || 'direct'}</span>
-              <span className="decision-ts">{formatTs(d.timestamp)}</span>
-            </div>
-            <div className="decision-utterance">{d.utterance}</div>
-          </div>
-        ))}
+        {decisions.map((d, i) => <DecisionCard key={i} d={d} />)}
         <div ref={endRef} />
       </div>
     </>
@@ -402,13 +446,13 @@ function DecisionsPanel({ decisions }) {
 // ── Session page ──────────────────────────────────────────────────────────────
 
 function SessionPage({ caseInfo }) {
-  const [transcript, setTranscript] = useState([]);
-  const [decisions,  setDecisions]  = useState([]);
+  const [transcript,   setTranscript]   = useState([]);
+  const [decisions,    setDecisions]    = useState([]);
   const [visionResult, setVisionResult] = useState('');
-  const [capturing,  setCapturing]  = useState(false);
-  const [connected,  setConnected]  = useState(false);
+  const [connected,    setConnected]    = useState(false);
 
-  const onConnected = useCallback(() => setConnected(true), []);
+  const onConnected    = useCallback(() => setConnected(true), []);
+  const onVisionUpdate = useCallback((analysis) => setVisionResult(analysis), []);
 
   useWebSocket(WS_TRANSCRIPT, useCallback((msg) => {
     if (msg.type === 'transcript' || msg.type === 'vision') {
@@ -420,19 +464,6 @@ function SessionPage({ caseInfo }) {
   useWebSocket(WS_DECISIONS, useCallback((msg) => {
     if (msg.type === 'decision') setDecisions((p) => [...p, msg]);
   }, []), onConnected);
-
-  const handleCapture = useCallback(async (b64) => {
-    setCapturing(true);
-    try {
-      const res  = await fetch(`${API}/analyze-photo`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image_b64: b64 }) });
-      const data = await res.json();
-      if (data.analysis) setVisionResult(data.analysis);
-    } catch {
-      alert('Vision server unreachable on port 7860.');
-    } finally {
-      setCapturing(false);
-    }
-  }, []);
 
   const latestDecision = decisions.length > 0 ? decisions[decisions.length - 1] : null;
 
@@ -450,7 +481,7 @@ function SessionPage({ caseInfo }) {
 
       <div className="session-body">
         <div className="panel">
-          <CameraPanel visionResult={visionResult} onCapture={handleCapture} capturing={capturing} />
+          <CameraPanel visionResult={visionResult} onVisionUpdate={onVisionUpdate} />
         </div>
         <div className="panel transcript-panel">
           <TranscriptPanel entries={transcript} />

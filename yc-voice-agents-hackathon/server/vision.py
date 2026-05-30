@@ -21,6 +21,7 @@ import asyncio
 import base64
 import json
 import os
+from datetime import datetime
 
 import cv2
 import numpy as np
@@ -106,7 +107,7 @@ async def analyze_photo(req: PhotoRequest):
         analysis = "No face detected in frame — ensure the subject is clearly visible."
         state.latest_vision_result = analysis
         _push_vision(analysis)
-        return {"analysis": analysis}
+        return {"analysis": analysis, "emotion": None, "confidence": 0, "flagged": False}
 
     # ── Step 2: format FER output as text ────────────────────────────────────
     dominant = max(emotions, key=emotions.get)
@@ -124,7 +125,25 @@ async def analyze_photo(req: PhotoRequest):
 
     logger.info(f"FER result: {emotion_summary}")
 
-    # ── Step 3: send text-only to GPT-4o — no image, no content policy issues ─
+    # ── Step 3: flagging logic ────────────────────────────────────────────────
+    HIGH_ALERT = {"fear", "angry", "disgust", "contempt", "surprise"}
+    prev_emotion = state.latest_emotion  # snapshot before update
+
+    state.latest_emotion = dominant
+    state.latest_emotion_confidence = confidence
+
+    flagged = (
+        (dominant in HIGH_ALERT and confidence > 50)
+        or (
+            prev_emotion
+            and prev_emotion != dominant
+            and dominant in HIGH_ALERT
+            and confidence > 40
+        )
+    )
+    state.latest_emotion_flagged = flagged
+
+    # ── Step 4: send text-only to GPT-4o — no image, no content policy issues ─
     prompt = (
         "You are a courtroom behavior analyst assisting a lawyer. "
         f"A witness/defendant facial expression analysis shows: {emotion_summary}.\n\n"
@@ -145,12 +164,17 @@ async def analyze_photo(req: PhotoRequest):
         analysis = resp.choices[0].message.content.strip()
     except Exception as e:
         logger.error(f"GPT-4o analysis error: {e}")
-        # Graceful fallback: return the raw FER data as plain text
         analysis = f"Detected {emotion_summary}."
 
     state.latest_vision_result = analysis
     _push_vision(analysis)
-    return {"analysis": analysis}
+
+    # ── Step 5: broadcast flagged emotion to Sidebar Intel ────────────────────
+    if flagged:
+        alert = f"Demeanor flag: {dominant} ({confidence}%) — {analysis}"
+        asyncio.create_task(_push_decision(alert, "camera"))
+
+    return {"analysis": analysis, "emotion": dominant, "confidence": confidence, "flagged": flagged}
 
 
 def _push_vision(text: str):
@@ -168,6 +192,27 @@ def _push_vision(text: str):
             state.transcript_subscribers.remove(ws)
 
     asyncio.create_task(_send())
+
+
+async def _push_decision(utterance: str, tool_fired: str):
+    """Broadcast a demeanor flag decision to Sidebar Intel subscribers."""
+    d = state.add_decision(utterance, tool_fired)
+    payload = json.dumps({
+        "type": "decision",
+        "timestamp": d.timestamp,
+        "utterance": utterance,
+        "tool_fired": tool_fired,
+        "verdict": None,
+        "claim": None,
+    })
+    dead = []
+    for ws in state.decision_subscribers:
+        try:
+            await ws.send_text(payload)
+        except Exception:
+            dead.append(ws)
+    for ws in dead:
+        state.decision_subscribers.remove(ws)
 
 
 @router.post("/brief")
@@ -241,6 +286,8 @@ async def ws_decisions(websocket: WebSocket):
                 "timestamp": d.timestamp,
                 "utterance": d.utterance,
                 "tool_fired": d.tool_fired,
+                "verdict": d.verdict,
+                "claim": d.claim,
             })
         )
     try:

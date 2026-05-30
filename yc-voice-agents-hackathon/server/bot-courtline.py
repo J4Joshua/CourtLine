@@ -1,14 +1,7 @@
-"""CourtLine Glass — voice AI legal co-pilot.
+"""Sidebar — autonomous AI legal co-pilot.
 
-Stays silent. Speaks only when:
-  1. It detects a factual or legal contradiction in what was said
-  2. A statute or precedent lookup is needed
-  3. The camera stress analysis flags elevated tension
-  4. It is directly addressed by name ("CourtLine, ...")
-
-Tools: recall_case(), search_legal(), check_camera()
-
-Pipeline: Gradium STT → GPT-4.1 (OpenAI Responses API) → Gradium TTS
+Pipeline: NVIDIA ASR STT → Nemotron-3-Super LLM → Gradium TTS
+Tools: recall_case, search_legal, check_camera, fact_check
 """
 
 import asyncio
@@ -20,7 +13,12 @@ from dotenv import load_dotenv
 from loguru import logger
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
 from pipecat.audio.vad.silero import SileroVADAnalyzer
-from pipecat.frames.frames import LLMRunFrame
+from pipecat.frames.frames import (
+    LLMFullResponseEndFrame,
+    LLMFullResponseStartFrame,
+    LLMRunFrame,
+    LLMTextFrame,
+)
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
@@ -28,12 +26,10 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
     LLMUserAggregatorParams,
 )
+from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.runner.types import RunnerArguments, SmallWebRTCRunnerArguments
 from pipecat.services.gradium.tts import GradiumTTSService
 from pipecat.services.llm_service import FunctionCallParams
-
-from nemotron_llm import VLLMOpenAILLMService
-from nvidia_stt import NVidiaWebSocketSTTService
 from pipecat.transports.base_transport import BaseTransport, TransportParams
 from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
@@ -41,6 +37,8 @@ from pipecat.turns.user_turn_strategies import FilterIncompleteUserTurnStrategie
 from pipecat.workers.runner import WorkerRunner
 from openai import AsyncOpenAI
 
+from nemotron_llm import VLLMOpenAILLMService
+from nvidia_stt import NVidiaWebSocketSTTService
 from case_store import state
 
 load_dotenv(override=True)
@@ -48,15 +46,22 @@ load_dotenv(override=True)
 _openai = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
 
 
-async def _broadcast_decision(utterance: str, tool_fired: str | None):
-    """Log to state and push to all decision WebSocket subscribers."""
-    import json as _json
-    d = state.add_decision(utterance, tool_fired)
-    payload = _json.dumps({
+# ── Broadcast helpers ─────────────────────────────────────────────────────────
+
+async def _broadcast_decision(
+    utterance: str,
+    tool_fired: str | None,
+    verdict: str | None = None,
+    claim: str | None = None,
+):
+    d = state.add_decision(utterance, tool_fired, verdict=verdict, claim=claim)
+    payload = json.dumps({
         "type": "decision",
         "timestamp": d.timestamp,
         "utterance": utterance,
         "tool_fired": tool_fired,
+        "verdict": verdict,
+        "claim": claim,
     })
     dead = []
     for ws in state.decision_subscribers:
@@ -69,9 +74,8 @@ async def _broadcast_decision(utterance: str, tool_fired: str | None):
 
 
 async def _broadcast_transcript(role: str, text: str):
-    import json as _json
     entry = state.add_transcript(role, text)
-    payload = _json.dumps({"type": "transcript", **entry})
+    payload = json.dumps({"type": "transcript", **entry})
     dead = []
     for ws in state.transcript_subscribers:
         try:
@@ -82,6 +86,59 @@ async def _broadcast_transcript(role: str, text: str):
         state.transcript_subscribers.remove(ws)
 
 
+def _extract_verdict(text: str) -> str | None:
+    """Parse TRUE / FALSE / UNVERIFIABLE from an agent fact-check verdict."""
+    t = text.lower()
+    if any(w in t for w in ["false", "impossible", "closes at", "closed at", "wasn't open",
+                             "not open", "wrong", "incorrect", "doesn't match"]):
+        return "FALSE"
+    if any(w in t for w in ["true", "confirmed", "correct", "accurate", "verified"]):
+        return "TRUE"
+    if any(w in t for w in ["can't confirm", "unverifiable", "could not verify", "unclear",
+                             "proceed with caution"]):
+        return "UNVERIFIABLE"
+    return None
+
+
+# ── Frame processor: buffer complete LLM response before broadcasting ─────────
+
+class AgentResponseBroadcaster(FrameProcessor):
+    """Buffers every LLMTextFrame between LLMFullResponseStart/EndFrame and
+    broadcasts the COMPLETE assembled string only after the End marker.
+
+    Fix 1: never broadcasts partial (mid-stream) text.
+    Fix 2: tags the broadcast with the pending tool+claim tracked by run_bot.
+    """
+
+    def __init__(self, get_pending_tool):
+        super().__init__()
+        self._buf: list[str] = []
+        self._get_pending_tool = get_pending_tool  # () -> (tool, claim)
+
+    async def process_frame(self, frame, direction: FrameDirection):
+        # super() handles StartFrame/EndFrame lifecycle (processor init/teardown)
+        await super().process_frame(frame, direction)
+        # Always forward every frame so the rest of the pipeline is unaffected
+        await self.push_frame(frame, direction)
+
+        if isinstance(frame, LLMFullResponseStartFrame):
+            self._buf = []
+
+        elif isinstance(frame, LLMTextFrame) and frame.text:
+            self._buf.append(frame.text)
+
+        elif isinstance(frame, LLMFullResponseEndFrame):
+            text = "".join(self._buf).strip()
+            self._buf = []
+            if not text:
+                return
+            tool, claim = self._get_pending_tool()
+            verdict = _extract_verdict(text) if tool == "fact_check" else None
+            asyncio.create_task(_broadcast_transcript("agent", text))
+            asyncio.create_task(_broadcast_decision(text, tool, verdict=verdict, claim=claim))
+
+
+# ── System instruction ────────────────────────────────────────────────────────
 
 SYSTEM_INSTRUCTION = f"""You are Sidebar, an autonomous AI legal intelligence operating as a lawyer's silent co-pilot during a live court proceeding. Today is {date.today().strftime('%A, %B %d, %Y')}.
 
@@ -130,22 +187,31 @@ WHEN TO STAY SILENT: When nothing actionable is detected between triggers. Never
 """
 
 
+# ── Bot pipeline ──────────────────────────────────────────────────────────────
+
 async def run_bot(transport: BaseTransport):
     logger.info("Sidebar bot starting")
 
-    # ── Tool implementations ──────────────────────────────────────────────────
+    # Tracks the most-recently-fired tool + claim so AgentResponseBroadcaster
+    # can tag the complete response with the right tool_fired / claim.
+    _pending: dict = {"tool": None, "claim": None}
+
+    def get_pending_tool() -> tuple[str | None, str | None]:
+        t, c = _pending["tool"], _pending["claim"]
+        _pending["tool"] = None
+        _pending["claim"] = None
+        return t, c
+
+    # ── Tools ─────────────────────────────────────────────────────────────────
 
     async def recall_case(params: FunctionCallParams) -> None:
         """Return the current case brief and recent transcript summary."""
+        _pending["tool"] = "recall"
         brief = state.case_brief or "(no case brief loaded yet)"
         recent = state.running_transcript[-10:] if state.running_transcript else []
         summary_lines = [f"[{e['role']}] {e['text']}" for e in recent]
-        result = {
-            "case_brief": brief,
-            "recent_transcript": summary_lines,
-        }
         await _broadcast_decision("(recall_case fired)", "recall")
-        await params.result_callback(result)
+        await params.result_callback({"case_brief": brief, "recent_transcript": summary_lines})
 
     async def search_legal(params: FunctionCallParams, query: str) -> None:
         """Search for statutes, case law, and legal precedents using web search.
@@ -154,6 +220,7 @@ async def run_bot(transport: BaseTransport):
             query: Legal search query, e.g. 'Miranda rights requirements' or
                    'hearsay exception Federal Rules of Evidence 803'
         """
+        _pending["tool"] = "search"
         await _broadcast_decision(f"Searching: {query}", "search")
         try:
             resp = await _openai.responses.create(
@@ -161,7 +228,6 @@ async def run_bot(transport: BaseTransport):
                 tools=[{"type": "web_search_preview"}],
                 input=f"Legal research query: {query}. Provide a concise answer with the most relevant statute or case citation.",
             )
-            # Extract text from response
             text = ""
             for block in resp.output:
                 if hasattr(block, "content"):
@@ -173,14 +239,17 @@ async def run_bot(transport: BaseTransport):
         except Exception as e:
             logger.error(f"search_legal error: {e}")
             text = f"Search unavailable: {e}"
-
         await params.result_callback({"result": text[:800]})
 
     async def check_camera(params: FunctionCallParams) -> None:
         """Return the latest body-language and demeanor analysis from the camera."""
-        analysis = state.latest_vision_result or "(no camera analysis yet — photo not captured)"
+        _pending["tool"] = "camera"
+        analysis = state.latest_vision_result or "(no camera analysis yet)"
+        emotion = state.latest_emotion
+        confidence = state.latest_emotion_confidence
+        detail = f"{emotion} ({confidence}%)" if emotion else ""
         await _broadcast_decision("(check_camera fired)", "camera")
-        await params.result_callback({"analysis": analysis})
+        await params.result_callback({"analysis": analysis, "emotion_detail": detail})
 
     async def fact_check(params: FunctionCallParams, claim: str) -> None:
         """Verify a specific factual claim made during testimony using web search.
@@ -194,7 +263,9 @@ async def run_bot(transport: BaseTransport):
                    "Macy's was open at 1am" or
                    "drive from downtown LA to Burbank takes 20 minutes at midnight"
         """
-        await _broadcast_decision(f"Fact-checking: {claim}", "fact_check")
+        _pending["tool"] = "fact_check"
+        _pending["claim"] = claim
+        await _broadcast_decision(f"Fact-checking: {claim}", "fact_check", claim=claim)
         try:
             resp = await _openai.responses.create(
                 model="gpt-4.1",
@@ -219,7 +290,6 @@ async def run_bot(transport: BaseTransport):
         except Exception as e:
             logger.error(f"fact_check error: {e}")
             text = f"Fact-check unavailable: {e}"
-
         await params.result_callback({"verdict": text[:600], "claim": claim})
 
     tool_functions = [recall_case, search_legal, check_camera, fact_check]
@@ -235,7 +305,10 @@ async def run_bot(transport: BaseTransport):
     enable_thinking = os.getenv("NEMOTRON_ENABLE_THINKING", "false").lower() == "true"
     llm = VLLMOpenAILLMService(
         api_key=os.getenv("NEMOTRON_LLM_API_KEY", "EMPTY"),
-        base_url=os.getenv("NEMOTRON_LLM_URL", "http://nemotron-fleet-alb-1322439314.us-west-2.elb.amazonaws.com/v1"),
+        base_url=os.getenv(
+            "NEMOTRON_LLM_URL",
+            "http://nemotron-fleet-alb-1322439314.us-west-2.elb.amazonaws.com/v1",
+        ),
         settings=VLLMOpenAILLMService.Settings(
             model=os.getenv("NEMOTRON_LLM_MODEL", "nvidia/nemotron-3-super"),
             system_instruction=SYSTEM_INSTRUCTION,
@@ -262,23 +335,15 @@ async def run_bot(transport: BaseTransport):
         ),
     )
 
-    # ── Transcript broadcasting via aggregator turn events ────────────────────
-    # on_user_turn_stopped fires with the complete finalized user utterance.
-    # on_assistant_turn_stopped fires with the complete agent response.
-    # Both are safe: they fire after the pipeline has fully processed the turn,
-    # avoiding any StartFrame-ordering issues with FrameProcessor placement.
-
+    # Broadcast complete user utterances when a turn ends
     @user_aggregator.event_handler("on_user_turn_stopped")
     async def on_user_turn_stopped(agg, strategy, message):
         if message.content.strip():
             asyncio.create_task(_broadcast_transcript("user", message.content.strip()))
 
-    @assistant_aggregator.event_handler("on_assistant_turn_stopped")
-    async def on_assistant_turn_stopped(agg, message):
-        text = message.content.strip()
-        if text and not message.interrupted:
-            asyncio.create_task(_broadcast_transcript("agent", text))
-            asyncio.create_task(_broadcast_decision(text, None))
+    # AgentResponseBroadcaster sits between LLM and TTS.
+    # It waits for LLMFullResponseEndFrame before broadcasting — never partial text.
+    agent_broadcaster = AgentResponseBroadcaster(get_pending_tool=get_pending_tool)
 
     pipeline = Pipeline(
         [
@@ -286,6 +351,7 @@ async def run_bot(transport: BaseTransport):
             stt,
             user_aggregator,
             llm,
+            agent_broadcaster,   # buffers tokens; broadcasts full response on EndFrame
             tts,
             transport.output(),
             assistant_aggregator,
@@ -304,21 +370,19 @@ async def run_bot(transport: BaseTransport):
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
-        logger.info("CourtLine client connected")
-        context.add_message(
-            {
-                "role": "user",
-                "content": (
-                    "Sidebar is now active and listening. "
-                    "Acknowledge in one short sentence that you are ready and monitoring."
-                ),
-            }
-        )
+        logger.info("Sidebar client connected")
+        context.add_message({
+            "role": "user",
+            "content": (
+                "Sidebar is now active and listening. "
+                "Acknowledge in one short sentence that you are ready and monitoring."
+            ),
+        })
         await worker.queue_frames([LLMRunFrame()])
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
-        logger.info("CourtLine client disconnected")
+        logger.info("Sidebar client disconnected")
         await worker.cancel()
 
     runner = WorkerRunner(handle_sigint=False)

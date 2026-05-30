@@ -31,6 +31,7 @@ from pipecat.runner.types import RunnerArguments, SmallWebRTCRunnerArguments
 from pipecat.services.gradium.tts import GradiumTTSService
 from pipecat.services.llm_service import FunctionCallParams
 from pipecat.transports.base_transport import BaseTransport, TransportParams
+from pipecat.transports.daily.transport import DailyParams
 from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 from pipecat.turns.user_turn_strategies import FilterIncompleteUserTurnStrategies
@@ -395,19 +396,25 @@ async def run_bot(transport: BaseTransport):
 
 
 async def bot(runner_args: RunnerArguments):
-    match runner_args:
-        case SmallWebRTCRunnerArguments():
-            transport = SmallWebRTCTransport(
-                webrtc_connection=runner_args.webrtc_connection,
-                params=TransportParams(
-                    audio_in_enabled=True,
-                    audio_out_enabled=True,
-                ),
-            )
-        case _:
-            logger.error(f"Unsupported runner args: {type(runner_args)}")
-            return
+    from pipecat.runner.utils import create_transport
 
+    # Daily is the transport Pipecat Cloud uses for browser sessions (dashboard +
+    # client SDKs); SmallWebRTC is what `uv run bot-courtline.py` uses locally.
+    # VAD lives on the user-turn aggregator (see run_bot), so the transport params
+    # only need audio in/out. Camera output is disabled — this is an audio-only bot.
+    transport_params = {
+        "daily": lambda: DailyParams(
+            audio_in_enabled=True,
+            audio_out_enabled=True,
+            camera_out_enabled=False,
+        ),
+        "webrtc": lambda: TransportParams(
+            audio_in_enabled=True,
+            audio_out_enabled=True,
+        ),
+    }
+
+    transport = await create_transport(runner_args, transport_params)
     await run_bot(transport)
 
 

@@ -72,6 +72,13 @@ function IconEye() {
     </svg>
   );
 }
+function IconClip() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 13 13" fill="none" style={{flexShrink:0}}>
+      <path d="M9.5 3.5L4 9a1.8 1.8 0 002.5 2.5l5-5a3 3 0 00-4.2-4.2l-5 5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+  );
+}
 
 // ── WebSocket hook ────────────────────────────────────────────────────────────
 
@@ -290,8 +297,41 @@ function UploadBriefsPage({ caseInfo, onNext }) {
 function CameraPanel({ visionResult, onVisionUpdate }) {
   const videoRef  = useRef(null);
   const canvasRef = useRef(null);
+  const evidenceInputRef = useRef(null);
   const [streaming,    setStreaming]    = useState(false);
   const [emotionBadge, setEmotionBadge] = useState(null);
+  const [evidenceStatus, setEvidenceStatus] = useState('');
+
+  // Upload an exhibit image OR video — Gemini describes/OCRs it server-side,
+  // adds it to the case knowledge, and the live agent reacts in real time.
+  const uploadEvidence = useCallback((file) => {
+    if (!file) return;
+    const MAX_BYTES = 35 * 1024 * 1024; // ~35MB raw ≈ 47MB base64, under Gemini's inline cap
+    if (file.size > MAX_BYTES) {
+      setEvidenceStatus('Too large (max 35MB)');
+      setTimeout(() => setEvidenceStatus(''), 4000);
+      return;
+    }
+    setEvidenceStatus(file.type.startsWith('video/') ? 'Analyzing video…' : 'Analyzing…');
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      // Send the full data-URI so the server keeps the real MIME type (PNG/WebP/JPEG).
+      try {
+        const res  = await fetch(`${API}/evidence`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image_b64: ev.target.result, label: file.name }),
+        });
+        const data = await res.json();
+        setEvidenceStatus(data.error ? 'Failed' : 'Evidence added ✓');
+      } catch (e) {
+        console.error('Evidence upload:', e);
+        setEvidenceStatus('Failed');
+      }
+      setTimeout(() => setEvidenceStatus(''), 4000);
+    };
+    reader.readAsDataURL(file);
+  }, []);
 
   const enableCamera = useCallback(() => {
     navigator.mediaDevices.getUserMedia({ video: true, audio: false })
@@ -354,6 +394,24 @@ function CameraPanel({ visionResult, onVisionUpdate }) {
             ? <div className="vision-card-text">{visionResult}</div>
             : <div className="vision-card-empty">Monitoring…</div>}
         </div>
+
+        <div className="evidence-controls">
+          <button className="btn-evidence" onClick={() => evidenceInputRef.current?.click()}>
+            <IconClip /> Add Evidence
+          </button>
+          {evidenceStatus && (
+            <span className={`evidence-status${/added ✓$/.test(evidenceStatus) ? '' : evidenceStatus.startsWith('Analyz') ? '' : ' evidence-status-err'}`}>
+              {evidenceStatus}
+            </span>
+          )}
+          <input
+            ref={evidenceInputRef}
+            type="file"
+            accept=".jpg,.jpeg,.png,.webp,.mp4,.mov,.webm,.m4v"
+            style={{ display: 'none' }}
+            onChange={(e) => { uploadEvidence(e.target.files[0]); e.target.value = ''; }}
+          />
+        </div>
       </div>
     </>
   );
@@ -395,7 +453,7 @@ function DecisionCard({ d }) {
   const verdict = d.verdict || (tool === 'fact_check' ? verdictFromText(d.utterance) : null);
   const slug    = tool.replace('_', '-');
 
-  const icon = { recall: <IconBook />, search: <IconSearch />, camera: <IconEye />, direct: <IconBubble /> }[tool] ?? <IconBubble />;
+  const icon = { recall: <IconBook />, search: <IconSearch />, camera: <IconEye />, evidence: <IconClip />, direct: <IconBubble /> }[tool] ?? <IconBubble />;
 
   return (
     <div className={`decision-card dc-${slug}`}>

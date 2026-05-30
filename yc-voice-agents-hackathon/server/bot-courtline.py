@@ -123,11 +123,13 @@ class AgentResponseBroadcaster(FrameProcessor):
 
         if isinstance(frame, LLMFullResponseStartFrame):
             self._buf = []
+            state.agent_speaking = True
 
         elif isinstance(frame, LLMTextFrame) and frame.text:
             self._buf.append(frame.text)
 
         elif isinstance(frame, LLMFullResponseEndFrame):
+            state.agent_speaking = False
             text = "".join(self._buf).strip()
             self._buf = []
             if not text:
@@ -360,6 +362,12 @@ async def run_bot(transport: BaseTransport):
         ),
     )
 
+    # Expose live handles so HTTP routes (vision.py /evidence) can inject
+    # messages into the running agent. Captured here, on the pipeline's loop.
+    state.context = context
+    state.worker = worker
+    state.loop = asyncio.get_running_loop()
+
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
         logger.info("Sidebar client connected")
@@ -375,6 +383,10 @@ async def run_bot(transport: BaseTransport):
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
         logger.info("Sidebar client disconnected")
+        state.context = None
+        state.worker = None
+        state.loop = None
+        state.agent_speaking = False
         await worker.cancel()
 
     runner = WorkerRunner(handle_sigint=False)

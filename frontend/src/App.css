@@ -176,6 +176,18 @@
 .vision-card-text  { font-size: 14px; line-height: 1.65; color: #3a3730; }
 .vision-card-empty { color: #ccc8c2; font-size: 14px; font-style: italic; }
 
+/* Add Evidence control */
+.evidence-controls { display: flex; align-items: center; gap: 10px; }
+.btn-evidence {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 9px 16px; border-radius: 10px;
+  background: #1a1a2e; color: #fff; border: none;
+  font-size: 13px; font-weight: 600; cursor: pointer; transition: background 0.15s;
+}
+.btn-evidence:hover { background: #2a2a44; }
+.evidence-status { font-size: 12px; font-weight: 600; color: #2b8a3e; }
+.evidence-status-err { color: #c92a2a; }
+
 /* ── Transcript — speech bubbles only, no demeanor cards ──────────────────── */
 .transcript-scroll {
   flex: 1; overflow-y: auto;
@@ -234,6 +246,7 @@
 .dc-search     { border-left-color: #1a1a2e; }
 .dc-recall     { border-left-color: #1a1a2e; }
 .dc-camera     { border-left-color: #1a1a2e; }
+.dc-evidence   { border-left-color: #1a1a2e; }
 .dc-direct     { border-left-color: #1a1a2e; }
 
 .dc-top { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; flex-wrap: wrap; }
@@ -247,13 +260,13 @@
   background: #f0f0f5; color: #1a1a2e;
 }
 /* All tool badges use navy — one accent color */
-.tb-fact-check, .tb-search, .tb-recall, .tb-camera, .tb-direct {
+.tb-fact-check, .tb-search, .tb-recall, .tb-camera, .tb-evidence, .tb-direct {
   background: #edf0f8; color: #1a1a2e;
 }
 /* Icon dots inherit color from badge classes */
 .intel-dot.tb-fact-check, .intel-dot.tb-search,
 .intel-dot.tb-recall,     .intel-dot.tb-camera,
-.intel-dot.tb-direct      { background: #1a1a2e; }
+.intel-dot.tb-evidence,   .intel-dot.tb-direct      { background: #1a1a2e; }
 
 /* Verdict pill */
 .dc-verdict {

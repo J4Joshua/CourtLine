@@ -27,8 +27,11 @@ import cv2
 import numpy as np
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fer.fer import FER
+from google import genai
+from google.genai import types
 from loguru import logger
 from openai import AsyncOpenAI
+from pipecat.frames.frames import LLMRunFrame
 from pydantic import BaseModel
 
 from case_store import state
@@ -36,6 +39,15 @@ from case_store import state
 router = APIRouter()
 
 _openai = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
+
+# Gemini handles evidence images AND videos (POST /evidence). Created lazily —
+# tolerate a missing key at import so the rest of the server still boots.
+_GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")
+try:
+    _gemini = genai.Client(api_key=os.environ.get("GEMINI_API_KEY", ""))
+except Exception as e:  # pragma: no cover
+    logger.warning(f"Gemini client init failed: {e}")
+    _gemini = None
 
 # Initialise once at module load — loading the model is expensive.
 # mtcnn=False uses OpenCV Haar cascades (fast, no extra dep);
@@ -82,6 +94,12 @@ class BriefRequest(BaseModel):
     files: list[FileUpload] = []
     # Legacy plain-text format
     brief: str | None = None
+
+
+class EvidenceRequest(BaseModel):
+    # Data-URI (preferred) or bare base64 of an exhibit — an image OR a video.
+    image_b64: str
+    label: str = ""         # optional human label, e.g. the file name
 
 
 @router.post("/analyze-photo")
@@ -233,6 +251,139 @@ async def set_brief(req: BriefRequest):
 
     logger.info(f"Case brief updated ({len(state.case_brief)} chars)")
     return {"ok": True, "length": len(state.case_brief)}
+
+
+def _inject_evidence_into_agent(summary: str):
+    """Push freshly-added evidence into the LIVE agent so it reacts immediately.
+
+    Mirrors the on_client_connected priming in bot-courtline.py: append a user
+    message, then queue an LLMRunFrame. Scheduled onto the pipeline's own loop
+    via run_coroutine_threadsafe so it is correct regardless of whether the HTTP
+    handler shares that loop. Skips the run (but still records the message) while
+    the agent is mid-response, to avoid colliding with an in-flight turn.
+    """
+    if state.context is None or state.worker is None or state.loop is None:
+        logger.info("Evidence stored, but no live agent to notify yet.")
+        return
+
+    async def _push():
+        # Re-check on the pipeline loop: the client may have disconnected between
+        # scheduling and running, which clears these handles. Wrap everything —
+        # exceptions in a run_coroutine_threadsafe coroutine are otherwise swallowed.
+        try:
+            if state.context is None or state.worker is None:
+                return
+            state.context.add_message({
+                "role": "user",
+                "content": (
+                    f"New evidence just entered the record: {summary}\n"
+                    "If it contradicts testimony or the case brief, flag it in one "
+                    "sentence; otherwise note in one sentence what it establishes."
+                ),
+            })
+            # Don't kick off a new LLM run on top of an in-flight response — the
+            # message is already in context and will be seen on the next turn.
+            if not state.agent_speaking:
+                await state.worker.queue_frames([LLMRunFrame()])
+        except Exception as e:
+            logger.error(f"Evidence injection failed: {e}")
+
+    asyncio.run_coroutine_threadsafe(_push(), state.loop)
+
+
+def _parse_media(raw: str) -> tuple[bytes, str]:
+    """Decode a data-URI (preferred) or bare base64 into (bytes, mime_type).
+
+    The data-URI carries the real MIME type so Gemini knows whether it's an
+    image or a video; bare base64 defaults to image/jpeg.
+    """
+    mime = "image/jpeg"
+    b64 = raw
+    if raw.startswith("data:"):
+        header, b64 = raw.split(",", 1)
+        mime = header[5:].split(";", 1)[0] or mime   # "data:video/mp4;base64" -> "video/mp4"
+    elif "," in raw:
+        b64 = raw.split(",", 1)[1]
+    return base64.b64decode(b64), mime
+
+
+def _gemini_describe(media_bytes: bytes, mime: str, prompt: str) -> str:
+    """Blocking Gemini call (image or video). Run via run_in_executor so it
+    doesn't block the event loop. Inline data covers files up to ~100MB."""
+    resp = _gemini.models.generate_content(
+        model=_GEMINI_MODEL,
+        contents=types.Content(parts=[
+            types.Part(inline_data=types.Blob(data=media_bytes, mime_type=mime)),
+            types.Part(text=prompt),
+        ]),
+    )
+    return (resp.text or "").strip()
+
+
+_PLAIN = " Respond in plain prose — no markdown, headers, or bullet points."
+_IMAGE_PROMPT = (
+    "You are assisting a trial lawyer. This image is a piece of evidence or an "
+    "exhibit submitted during a live trial. Transcribe any text you can read "
+    "(OCR) and describe what it shows in 2-4 sentences, focusing on facts "
+    "relevant to a case: names, dates, times, amounts, locations, and "
+    "statements. Be concise and strictly factual — do not speculate." + _PLAIN
+)
+_VIDEO_PROMPT = (
+    "You are assisting a trial lawyer. This is a VIDEO exhibit submitted during a "
+    "live trial. Describe what happens across the clip, noting the approximate "
+    "timestamp of any key moment, and transcribe any spoken or on-screen text. "
+    "Focus on facts relevant to a case: people, actions, times, locations, and "
+    "statements. 2-5 sentences, strictly factual — do not speculate." + _PLAIN
+)
+
+
+@router.post("/evidence")
+async def add_evidence(req: EvidenceRequest):
+    """Accept an exhibit image OR video, describe it with Gemini, add it to the
+    case knowledge, and notify the live agent in real time."""
+    if _gemini is None:
+        return {"error": "Gemini is not configured (set GEMINI_API_KEY)."}
+
+    try:
+        media_bytes, mime = _parse_media(req.image_b64)
+    except Exception:
+        return {"error": "Invalid base64 payload"}
+
+    is_video = mime.startswith("video/")
+    prompt = _VIDEO_PROMPT if is_video else _IMAGE_PROMPT
+
+    loop = asyncio.get_event_loop()
+    try:
+        summary = await loop.run_in_executor(
+            None, _gemini_describe, media_bytes, mime, prompt
+        )
+    except Exception as e:
+        logger.error(f"Evidence analysis error: {e}")
+        return {"error": f"Evidence analysis failed: {e}"}
+    if not summary:
+        return {"error": "Gemini returned no description."}
+
+    summary = summary[:1500]
+    label = req.label.strip()
+    state.add_evidence(summary, label)
+
+    # Persist into the case brief so recall_case() surfaces it on future turns.
+    kind = "VIDEO EVIDENCE" if is_video else "EVIDENCE"
+    header = f"\n\n{kind} — {label}" if label else f"\n\n{kind} SUBMITTED"
+    state.case_brief = (state.case_brief or "") + f"{header}\n{summary}"
+
+    logger.info(f"Evidence added ({'video' if is_video else 'image'}, "
+                f"{label or 'unlabeled'}, {len(summary)} chars)")
+
+    # Show it in the Sidebar Intel feed.
+    kind_label = "Video evidence" if is_video else "Evidence"
+    card = f"{kind_label} added{f' — {label}' if label else ''}: {summary}"
+    await _push_decision(card, "evidence")
+
+    # Push into the live agent so it reacts now.
+    _inject_evidence_into_agent(summary)
+
+    return {"ok": True, "summary": summary, "label": label, "kind": "video" if is_video else "image"}
 
 
 @router.get("/state")

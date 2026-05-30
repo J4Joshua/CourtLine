@@ -1,0 +1,23 @@
+# Secrets
+.env
+*.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+*.egg-info/
+dist/
+build/
+
+# Node
+node_modules/
+frontend/build/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Locks (keep pyproject.toml, exclude uv.lock if desired)
+# uv.lock

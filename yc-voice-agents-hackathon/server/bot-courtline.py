@@ -20,14 +20,7 @@ from dotenv import load_dotenv
 from loguru import logger
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
 from pipecat.audio.vad.silero import SileroVADAnalyzer
-from pipecat.frames.frames import (
-    LLMFullResponseEndFrame,
-    LLMFullResponseStartFrame,
-    LLMMessagesAppendFrame,
-    LLMRunFrame,
-    TextFrame,
-    TranscriptionFrame,
-)
+from pipecat.frames.frames import LLMRunFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
@@ -35,7 +28,6 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
     LLMUserAggregatorParams,
 )
-from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.runner.types import RunnerArguments, SmallWebRTCRunnerArguments
 from pipecat.services.gradium.stt import GradiumSTTService
 from pipecat.services.gradium.tts import GradiumTTSService
@@ -89,33 +81,6 @@ async def _broadcast_transcript(role: str, text: str):
     for ws in dead:
         state.transcript_subscribers.remove(ws)
 
-
-class TranscriptBroadcaster(FrameProcessor):
-    """Intercepts user transcriptions and agent LLM responses, broadcasts both to WS."""
-
-    def __init__(self, role: str):
-        super().__init__()
-        self._role = role  # "user" or "agent"
-        self._buf: list[str] = []
-
-    async def process_frame(self, frame, direction: FrameDirection):
-        await self.push_frame(frame, direction)
-
-        if self._role == "user" and isinstance(frame, TranscriptionFrame):
-            if frame.text.strip():
-                await _broadcast_transcript("user", frame.text.strip())
-
-        elif self._role == "agent":
-            if isinstance(frame, LLMFullResponseStartFrame):
-                self._buf = []
-            elif isinstance(frame, TextFrame) and frame.text:
-                self._buf.append(frame.text)
-            elif isinstance(frame, LLMFullResponseEndFrame):
-                full = "".join(self._buf).strip()
-                if full:
-                    await _broadcast_transcript("agent", full)
-                    await _broadcast_decision(full, None)
-                self._buf = []
 
 
 SYSTEM_INSTRUCTION = f"""You are CourtLine Glass, an autonomous AI legal intelligence operating as a lawyer's silent co-pilot during a live court proceeding. Today is {date.today().strftime('%A, %B %d, %Y')}.
@@ -252,9 +217,6 @@ async def run_bot(transport: BaseTransport):
 
     # ── Pipeline components ───────────────────────────────────────────────────
 
-    user_broadcaster = TranscriptBroadcaster(role="user")
-    agent_broadcaster = TranscriptBroadcaster(role="agent")
-
     stt = GradiumSTTService(
         api_key=os.environ["GRADIUM_API_KEY"],
         settings=GradiumSTTService.Settings(language=Language.EN),
@@ -287,14 +249,30 @@ async def run_bot(transport: BaseTransport):
         ),
     )
 
+    # ── Transcript broadcasting via aggregator turn events ────────────────────
+    # on_user_turn_stopped fires with the complete finalized user utterance.
+    # on_assistant_turn_stopped fires with the complete agent response.
+    # Both are safe: they fire after the pipeline has fully processed the turn,
+    # avoiding any StartFrame-ordering issues with FrameProcessor placement.
+
+    @user_aggregator.event_handler("on_user_turn_stopped")
+    async def on_user_turn_stopped(agg, strategy, message):
+        if message.content.strip():
+            asyncio.create_task(_broadcast_transcript("user", message.content.strip()))
+
+    @assistant_aggregator.event_handler("on_assistant_turn_stopped")
+    async def on_assistant_turn_stopped(agg, message):
+        text = message.content.strip()
+        if text and not message.interrupted:
+            asyncio.create_task(_broadcast_transcript("agent", text))
+            asyncio.create_task(_broadcast_decision(text, None))
+
     pipeline = Pipeline(
         [
             transport.input(),
             stt,
-            user_broadcaster,       # broadcasts TranscriptionFrame → WS transcript feed
             user_aggregator,
             llm,
-            agent_broadcaster,      # broadcasts LLM TextFrames → WS transcript + decisions
             tts,
             transport.output(),
             assistant_aggregator,

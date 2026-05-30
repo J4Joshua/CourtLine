@@ -29,11 +29,11 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMUserAggregatorParams,
 )
 from pipecat.runner.types import RunnerArguments, SmallWebRTCRunnerArguments
-from pipecat.services.gradium.stt import GradiumSTTService
 from pipecat.services.gradium.tts import GradiumTTSService
 from pipecat.services.llm_service import FunctionCallParams
-from pipecat.services.openai.responses.llm import OpenAIResponsesLLMService
-from pipecat.transcriptions.language import Language
+
+from nemotron_llm import VLLMOpenAILLMService
+from nvidia_stt import NVidiaWebSocketSTTService
 from pipecat.transports.base_transport import BaseTransport, TransportParams
 from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
@@ -227,16 +227,19 @@ async def run_bot(transport: BaseTransport):
 
     # ── Pipeline components ───────────────────────────────────────────────────
 
-    stt = GradiumSTTService(
-        api_key=os.environ["GRADIUM_API_KEY"],
-        settings=GradiumSTTService.Settings(language=Language.EN),
+    stt = NVidiaWebSocketSTTService(
+        url=os.getenv("NVIDIA_ASR_URL", "ws://44.241.251.184:8080"),
+        strip_interim_prefix=True,
     )
 
-    llm = OpenAIResponsesLLMService(
-        api_key=os.environ["OPENAI_API_KEY"],
-        settings=OpenAIResponsesLLMService.Settings(
-            model=os.getenv("OPENAI_MODEL", "gpt-4.1"),
+    enable_thinking = os.getenv("NEMOTRON_ENABLE_THINKING", "false").lower() == "true"
+    llm = VLLMOpenAILLMService(
+        api_key=os.getenv("NEMOTRON_LLM_API_KEY", "EMPTY"),
+        base_url=os.getenv("NEMOTRON_LLM_URL", "http://nemotron-fleet-alb-1322439314.us-west-2.elb.amazonaws.com/v1"),
+        settings=VLLMOpenAILLMService.Settings(
+            model=os.getenv("NEMOTRON_LLM_MODEL", "nvidia/nemotron-3-super"),
             system_instruction=SYSTEM_INSTRUCTION,
+            extra={"extra_body": {"chat_template_kwargs": {"enable_thinking": enable_thinking}}},
         ),
     )
 

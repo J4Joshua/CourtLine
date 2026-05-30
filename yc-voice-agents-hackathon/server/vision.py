@@ -126,21 +126,14 @@ async def analyze_photo(req: PhotoRequest):
     logger.info(f"FER result: {emotion_summary}")
 
     # ── Step 3: flagging logic ────────────────────────────────────────────────
-    HIGH_ALERT = {"fear", "angry", "disgust", "contempt", "surprise"}
-    prev_emotion = state.latest_emotion  # snapshot before update
+    # Spoken alerts only for fear/anger/disgust/contempt. Surprise and neutral
+    # update the badge silently but never produce a spoken alert or decision card.
+    SPOKEN_ALERT = {"fear", "angry", "disgust", "contempt"}
 
     state.latest_emotion = dominant
     state.latest_emotion_confidence = confidence
 
-    flagged = (
-        (dominant in HIGH_ALERT and confidence > 50)
-        or (
-            prev_emotion
-            and prev_emotion != dominant
-            and dominant in HIGH_ALERT
-            and confidence > 40
-        )
-    )
+    flagged = dominant in SPOKEN_ALERT and confidence > 40
     state.latest_emotion_flagged = flagged
 
     # ── Step 4: send text-only to GPT-4o — no image, no content policy issues ─

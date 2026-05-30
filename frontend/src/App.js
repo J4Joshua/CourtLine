@@ -43,32 +43,32 @@ function verdictFromText(utterance) {
 
 function IconBook() {
   return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-      <rect x="1.5" y="1" width="11" height="12" rx="1.5" stroke="#7048e8" strokeWidth="1.5"/>
-      <path d="M4 4.5h6M4 7h6M4 9.5h4" stroke="#7048e8" strokeWidth="1.2" strokeLinecap="round"/>
+    <svg width="13" height="13" viewBox="0 0 13 13" fill="none" style={{flexShrink:0}}>
+      <rect x="1.5" y="1" width="10" height="11" rx="1.5" stroke="currentColor" strokeWidth="1.4"/>
+      <path d="M3.5 4h6M3.5 6.5h6M3.5 9h4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
     </svg>
   );
 }
 function IconSearch() {
   return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-      <circle cx="6" cy="6" r="4" stroke="#0c7a5a" strokeWidth="1.5"/>
-      <path d="M9.5 9.5l3 3" stroke="#0c7a5a" strokeWidth="1.5" strokeLinecap="round"/>
+    <svg width="13" height="13" viewBox="0 0 13 13" fill="none" style={{flexShrink:0}}>
+      <circle cx="5.5" cy="5.5" r="3.5" stroke="currentColor" strokeWidth="1.4"/>
+      <path d="M8.5 8.5l3 3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
     </svg>
   );
 }
 function IconBubble() {
   return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-      <path d="M1.5 1.5h11a.5.5 0 01.5.5v7a.5.5 0 01-.5.5H8L6 12l-2-2.5H1.5A.5.5 0 011 9V2a.5.5 0 01.5-.5z" stroke="#1a1a2e" strokeWidth="1.5"/>
+    <svg width="13" height="13" viewBox="0 0 13 13" fill="none" style={{flexShrink:0}}>
+      <path d="M1.5 1.5h10a.5.5 0 01.5.5v6a.5.5 0 01-.5.5H7.5l-2 2-2-2H1.5a.5.5 0 01-.5-.5V2a.5.5 0 01.5-.5z" stroke="currentColor" strokeWidth="1.4"/>
     </svg>
   );
 }
 function IconEye() {
   return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-      <path d="M1 7C2.5 4 5 2.5 7 2.5S11.5 4 13 7C11.5 10 9 11.5 7 11.5S2.5 10 1 7z" stroke="#b07d00" strokeWidth="1.5"/>
-      <circle cx="7" cy="7" r="2" stroke="#b07d00" strokeWidth="1.5"/>
+    <svg width="13" height="13" viewBox="0 0 13 13" fill="none" style={{flexShrink:0}}>
+      <path d="M1 6.5C2.5 3.5 4.8 2 6.5 2S10.5 3.5 12 6.5C10.5 9.5 8.2 11 6.5 11S2.5 9.5 1 6.5z" stroke="currentColor" strokeWidth="1.4"/>
+      <circle cx="6.5" cy="6.5" r="1.8" stroke="currentColor" strokeWidth="1.4"/>
     </svg>
   );
 }
@@ -100,7 +100,7 @@ function useWebSocket(url, onMessage, onOpen) {
   return wsRef;
 }
 
-// ── Step-page character (right side, static bubble) ──────────────────────────
+// ── Step-page character ───────────────────────────────────────────────────────
 
 function StepCharacter({ bubble }) {
   return (
@@ -111,10 +111,11 @@ function StepCharacter({ bubble }) {
   );
 }
 
-// ── Session character (bottom-right, float, live bubble) ─────────────────────
+// ── Session character — bottom-right, float, live bubble ─────────────────────
 
 function SidebarCharacter({ latestDecision }) {
-  const [bubble, setBubble] = useState('Monitoring...');
+  const [bubble,   setBubble]   = useState('Monitoring...');
+  const [bouncing, setBouncing] = useState(false);
   const prevRef  = useRef(null);
   const timerRef = useRef(null);
 
@@ -124,12 +125,13 @@ function SidebarCharacter({ latestDecision }) {
     if (key === prevRef.current) return;
     prevRef.current = key;
 
-    // Strip internal "(tool fired)" messages — only show spoken verdicts
     const raw = latestDecision.utterance.replace(/^\(.*?\)\s*/, '').trim();
     if (!raw) return;
 
-    const text = raw.length > 130 ? raw.slice(0, 127) + '…' : raw;
+    const text = raw.length > 160 ? raw.slice(0, 157) + '…' : raw;
     setBubble(text);
+    setBouncing(true);
+    setTimeout(() => setBouncing(false), 650);
     clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => setBubble('Monitoring...'), 5000);
   }, [latestDecision]);
@@ -139,16 +141,21 @@ function SidebarCharacter({ latestDecision }) {
   return (
     <div className="character-wrap">
       <div className="character-bubble">{bubble}</div>
-      <img src={lawyerImg} alt="Sidebar" className="character-img" />
+      <img
+        src={lawyerImg}
+        alt="Sidebar"
+        className={`character-img${bouncing ? ' character-bouncing' : ''}`}
+      />
+      <div className="character-name">Sidebar</div>
     </div>
   );
 }
 
-// ── Step 1: Open Case ─────────────────────────────────────────────────────────
+// ── Step 1 ────────────────────────────────────────────────────────────────────
 
 function OpenCasePage({ onNext }) {
   const [form, setForm] = useState({ caseName: '', defendantName: '', charges: '', jurisdiction: '' });
-  const set = (key) => (e) => setForm((p) => ({ ...p, [key]: e.target.value }));
+  const set = (k) => (e) => setForm((p) => ({ ...p, [k]: e.target.value }));
 
   return (
     <div className="step-page">
@@ -186,14 +193,14 @@ function OpenCasePage({ onNext }) {
   );
 }
 
-// ── Step 2: Upload Briefs ─────────────────────────────────────────────────────
+// ── Step 2 ────────────────────────────────────────────────────────────────────
 
 function UploadBriefsPage({ caseInfo, onNext }) {
-  const [files, setFiles] = useState([]);
-  const [notes, setNotes] = useState('');
+  const [files, setFiles]     = useState([]);
+  const [notes, setNotes]     = useState('');
   const [dragging, setDragging] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
+  const [saving, setSaving]   = useState(false);
+  const [saved, setSaved]     = useState(false);
   const inputRef = useRef(null);
 
   const addFiles = useCallback((incoming) => {
@@ -262,7 +269,7 @@ function UploadBriefsPage({ caseInfo, onNext }) {
               ))}
             </ul>
           )}
-          <div className="form-field" style={{ marginTop: 20 }}>
+          <div className="form-field" style={{ marginTop: 22 }}>
             <label>Additional Notes / Facts</label>
             <textarea className="notes-area" placeholder="Key facts, witness names, timeline, important context…" rows={4} value={notes} onChange={(e) => setNotes(e.target.value)} />
           </div>
@@ -278,12 +285,12 @@ function UploadBriefsPage({ caseInfo, onNext }) {
   );
 }
 
-// ── Camera panel (auto-monitoring, no manual capture button) ──────────────────
+// ── Camera panel ──────────────────────────────────────────────────────────────
 
 function CameraPanel({ visionResult, onVisionUpdate }) {
-  const videoRef   = useRef(null);
-  const canvasRef  = useRef(null);
-  const [streaming, setStreaming] = useState(false);
+  const videoRef  = useRef(null);
+  const canvasRef = useRef(null);
+  const [streaming,    setStreaming]    = useState(false);
   const [emotionBadge, setEmotionBadge] = useState(null);
 
   const enableCamera = useCallback(() => {
@@ -292,7 +299,6 @@ function CameraPanel({ visionResult, onVisionUpdate }) {
       .catch((err) => console.error('Camera:', err));
   }, []);
 
-  // Capture current frame as base64 JPEG
   const captureFrame = useCallback(() => {
     if (!videoRef.current || !canvasRef.current) return null;
     const cv = canvasRef.current;
@@ -302,10 +308,9 @@ function CameraPanel({ visionResult, onVisionUpdate }) {
     return cv.toDataURL('image/jpeg', 0.7).split(',')[1];
   }, []);
 
-  // Auto-monitoring every 5 seconds — cleans up on unmount
+  // Auto-monitor every 5 seconds — clearInterval on unmount
   useEffect(() => {
     if (!streaming) return;
-
     const doCapture = async () => {
       const b64 = captureFrame();
       if (!b64) return;
@@ -316,15 +321,10 @@ function CameraPanel({ visionResult, onVisionUpdate }) {
           body: JSON.stringify({ image_b64: b64 }),
         });
         const data = await res.json();
-        if (data.emotion) {
-          setEmotionBadge({ emotion: data.emotion, confidence: data.confidence, flagged: data.flagged });
-        }
+        if (data.emotion) setEmotionBadge({ emotion: data.emotion, confidence: data.confidence, flagged: data.flagged });
         if (data.analysis) onVisionUpdate(data.analysis);
-      } catch (e) {
-        console.error('Auto-monitor:', e);
-      }
+      } catch (e) { console.error('Auto-monitor:', e); }
     };
-
     const id = setInterval(doCapture, 5000);
     return () => clearInterval(id);
   }, [streaming, captureFrame, onVisionUpdate]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -339,11 +339,13 @@ function CameraPanel({ visionResult, onVisionUpdate }) {
         </div>
         <canvas ref={canvasRef} style={{ display: 'none' }} />
 
-        {emotionBadge && (
+        {emotionBadge ? (
           <div className={`emotion-badge ${emotionBadgeClass(emotionBadge.emotion)}`}>
             {emotionBadge.emotion.toUpperCase()} {emotionBadge.confidence}%
             {emotionBadge.flagged && <span className="em-flag"> !</span>}
           </div>
+        ) : (
+          <div className="emotion-badge em-gray">—</div>
         )}
 
         <div className="vision-card">
@@ -357,7 +359,7 @@ function CameraPanel({ visionResult, onVisionUpdate }) {
   );
 }
 
-// ── Transcript panel ──────────────────────────────────────────────────────────
+// ── Transcript panel — spoken words only, no demeanor cards ──────────────────
 
 function TranscriptPanel({ entries }) {
   const endRef = useRef(null);
@@ -367,16 +369,8 @@ function TranscriptPanel({ entries }) {
     <>
       <div className="panel-header">Live Transcript</div>
       <div className="transcript-scroll">
-        {entries.length === 0 && <div className="panel-empty">Transcript will appear when the session starts.</div>}
+        {entries.length === 0 && <div className="panel-empty">Spoken words will appear here.</div>}
         {entries.map((e, i) => {
-          if (e.type === 'vision') {
-            return (
-              <div key={i} className="transcript-demeanor">
-                <div className="demeanor-header"><IconEye /><span>DEMEANOR</span></div>
-                <div className="demeanor-text">{e.text}</div>
-              </div>
-            );
-          }
           const isAgent = e.role !== 'user';
           return (
             <div key={i} className={`bubble-row ${isAgent ? 'bubble-row-agent' : 'bubble-row-speaker'}`}>
@@ -394,31 +388,20 @@ function TranscriptPanel({ entries }) {
   );
 }
 
-// ── Decisions panel ───────────────────────────────────────────────────────────
+// ── Decisions panel — collapsible, newest on top ──────────────────────────────
 
 function DecisionCard({ d }) {
-  const tool = d.tool_fired || 'direct';
-  // verdict may come from the server payload or be parsed from the utterance
+  const tool    = d.tool_fired || 'direct';
   const verdict = d.verdict || (tool === 'fact_check' ? verdictFromText(d.utterance) : null);
+  const slug    = tool.replace('_', '-');
 
-  const toolIcon = {
-    recall:     <IconBook />,
-    search:     <IconSearch />,
-    camera:     <IconEye />,
-    fact_check: null,
-    direct:     <IconBubble />,
-  }[tool] ?? <IconBubble />;
+  const icon = { recall: <IconBook />, search: <IconSearch />, camera: <IconEye />, direct: <IconBubble /> }[tool] ?? <IconBubble />;
 
   return (
-    <div className={`decision-card dc-${tool.replace('_', '-')}`}>
+    <div className={`decision-card dc-${slug}`}>
       <div className="dc-top">
-        <span className={`dc-tool-badge tb-${tool.replace('_', '-')}`}>
-          {toolIcon}
-          {tool.replace('_', ' ').toUpperCase()}
-        </span>
-        {verdict && (
-          <span className={`dc-verdict vd-${verdict.toLowerCase()}`}>{verdict}</span>
-        )}
+        <span className={`dc-tool-badge tb-${slug}`}>{icon}{tool.replace('_', ' ').toUpperCase()}</span>
+        {verdict && <span className={`dc-verdict vd-${verdict.toLowerCase()}`}>{verdict}</span>}
         <span className="decision-ts">{formatTs(d.timestamp)}</span>
       </div>
       {d.claim && <div className="dc-claim">"{d.claim}"</div>}
@@ -428,17 +411,35 @@ function DecisionCard({ d }) {
 }
 
 function DecisionsPanel({ decisions }) {
-  const endRef = useRef(null);
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [decisions]);
+  const [collapsed, setCollapsed] = useState(false);
+  // newest on top
+  const sorted = [...decisions].reverse();
 
   return (
     <>
-      <div className="panel-header">Sidebar Intel</div>
-      <div className="decisions-scroll">
-        {decisions.length === 0 && <div className="panel-empty">Sidebar interventions will appear here.</div>}
-        {decisions.map((d, i) => <DecisionCard key={i} d={d} />)}
-        <div ref={endRef} />
+      <div className="panel-header intel-header">
+        <span>Sidebar Intel</span>
+        <button className="intel-toggle" onClick={() => setCollapsed(c => !c)} title={collapsed ? 'Expand' : 'Collapse'}>
+          {collapsed ? '▼' : '▲'}
+        </button>
       </div>
+      {collapsed ? (
+        <div className="intel-icons">
+          {sorted.slice(0, 14).map((d, i) => (
+            <div
+              key={i}
+              className={`intel-dot tb-${(d.tool_fired || 'direct').replace('_', '-')}`}
+              title={d.utterance}
+            />
+          ))}
+          {sorted.length === 0 && <div className="intel-dots-empty">—</div>}
+        </div>
+      ) : (
+        <div className="decisions-scroll">
+          {sorted.length === 0 && <div className="panel-empty">Sidebar interventions will appear here.</div>}
+          {sorted.map((d, i) => <DecisionCard key={i} d={d} />)}
+        </div>
+      )}
     </>
   );
 }
@@ -452,12 +453,15 @@ function SessionPage({ caseInfo }) {
   const [connected,    setConnected]    = useState(false);
 
   const onConnected    = useCallback(() => setConnected(true), []);
-  const onVisionUpdate = useCallback((analysis) => setVisionResult(analysis), []);
+  const onVisionUpdate = useCallback((a) => setVisionResult(a), []);
 
   useWebSocket(WS_TRANSCRIPT, useCallback((msg) => {
-    if (msg.type === 'transcript' || msg.type === 'vision') {
+    // Only add spoken transcript entries — demeanor (vision) updates the badge
+    // silently via the HTTP response; exclude them from the chat panel.
+    if (msg.type === 'transcript') {
       setTranscript((p) => [...p, msg]);
-      if (msg.type === 'vision') setVisionResult(msg.text);
+    } else if (msg.type === 'vision') {
+      setVisionResult(msg.text);
     }
   }, []), onConnected);
 

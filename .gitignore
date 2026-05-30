@@ -21,3 +21,32 @@ Thumbs.db
 
 # Locks (keep pyproject.toml, exclude uv.lock if desired)
 # uv.lock
+
+# Xcode / RayBan iOS app
+*.xcframework/
+xcuserdata/
+*.xcuserstate
+*.xcuserdatad/
+DerivedData/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Swift Package Manager
+.swiftpm/
+.build/
+Package.resolved
+
+# Python (server/) extras
+*.py[cod]
+.pytest_cache/
+venv/
+
+# Stub server output
+server/photos/
+
+# Editors
+.vscode/
+.idea/

@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "courtline-server",
+      "runtimeExecutable": "server/.venv/bin/uvicorn",
+      "runtimeArgs": ["main:app", "--host", "0.0.0.0", "--port", "8000", "--app-dir", "server"],
+      "port": 8000,
+      "env": { "PYTHONUNBUFFERED": "1" }
+    }
+  ]
+}

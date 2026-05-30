@@ -16,5 +16,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-install-project --no-dev
 
 # Copy the application code
-COPY ./bot.py bot.py
-COPY ./mock_backend.py mock_backend.py
+# bot-courtline.py is mapped to bot.py — the base image runs bot.py and invokes its bot() entrypoint
+COPY ./bot-courtline.py bot.py
+COPY ./nemotron_llm.py nemotron_llm.py
+COPY ./nvidia_stt.py nvidia_stt.py
+COPY ./case_store.py case_store.py

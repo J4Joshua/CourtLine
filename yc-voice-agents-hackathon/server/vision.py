@@ -184,6 +184,10 @@ async def analyze_photo(req: PhotoRequest):
     if flagged:
         alert = f"Demeanor flag: {dominant} ({confidence}%) — {analysis}"
         asyncio.create_task(_push_decision(alert, "camera"))
+        # Queue a silent context injection for the bot's next user turn
+        state.pending_emotion_alerts.append(
+            f"[Demeanor monitor] Subject showing {dominant} at {confidence}% confidence."
+        )
 
     return {"analysis": analysis, "emotion": dominant, "confidence": confidence, "flagged": flagged}
 
@@ -226,8 +230,38 @@ async def _push_decision(utterance: str, tool_fired: str):
         state.decision_subscribers.remove(ws)
 
 
+@router.get("/brief-facts")
+async def get_brief_facts():
+    """Extract 5-7 key verifiable facts from the loaded case brief via GPT-4o-mini."""
+    brief = state.case_brief.strip()
+    if not brief:
+        return {"facts": []}
+    try:
+        resp = await _openai.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{
+                "role": "user",
+                "content": (
+                    "Extract 5 to 7 key verifiable facts from this case brief as short labels "
+                    "under 5 words each. Return JSON: {\"facts\": [\"fact1\", \"fact2\", ...]}\n\n"
+                    f"Brief:\n{brief[:3000]}"
+                ),
+            }],
+            response_format={"type": "json_object"},
+            max_tokens=220,
+        )
+        import json as _json
+        data = _json.loads(resp.choices[0].message.content)
+        facts = data.get("facts") or next(iter(data.values()), [])
+        return {"facts": [str(f)[:40] for f in facts[:7]]}
+    except Exception as e:
+        logger.error(f"brief-facts error: {e}")
+        return {"facts": []}
+
+
 @router.post("/brief")
 async def set_brief(req: BriefRequest):
+    state.reset()   # clear all prior session data before loading new brief
     if req.brief is not None:
         state.case_brief = req.brief.strip()
     else:

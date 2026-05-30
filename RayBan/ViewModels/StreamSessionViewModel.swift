@@ -15,7 +15,7 @@ import SwiftUI
 // ⚙️ CONFIG — the one knob to point the app at your server.
 // `localhost` works in the iOS Simulator. On a real device, set this to your
 // Mac's LAN IP (e.g. ws://192.168.1.42:8000) or a tunnel URL. See README.md.
-private let streamPublishHost = "ws://localhost:8000"
+private let streamPublishHost = "ws://172.17.23.225:8000"
 
 private func publishURL(path: String) -> URL {
   URL(string: "\(streamPublishHost)\(path)")!

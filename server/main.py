@@ -15,8 +15,10 @@ Run:
 from __future__ import annotations
 
 import json
+import math
 import struct
 import time
+import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
@@ -27,10 +29,82 @@ app = FastAPI(title="CourtLine stub server")
 PHOTOS_DIR = Path(__file__).parent / "photos"
 PHOTOS_DIR.mkdir(exist_ok=True)
 
+# Live sockets, so the /test/* trigger endpoints below can push control
+# messages and audio to whatever glasses are currently connected. These let
+# you exercise the *server -> app* half of the contract by hand during an
+# end-to-end test (curl from another terminal).
+PUBLISH_SOCKETS: set[WebSocket] = set()
+AGENT_AUDIO_SOCKETS: set[WebSocket] = set()
+
 
 @app.get("/")
 async def root():
     return {"ok": True, "service": "courtline-stub"}
+
+
+# --- Test triggers (server -> app) ------------------------------------------
+# These are NOT part of the protocol the app speaks; they're dev conveniences
+# that fan out a control message / audio to connected glasses so you can verify
+# the downlink legs e2e. Hit them with curl while the app is streaming.
+@app.post("/test/capture-photo")
+async def test_capture_photo():
+    """Ask the glasses to take a full-res still (PROTOCOL §1.1 / §1.4)."""
+    request_id = uuid.uuid4().hex[:8]
+    msg = json.dumps({"type": "capture_photo", "request_id": request_id})
+    sent = await _broadcast_text(PUBLISH_SOCKETS, msg)
+    print(f"[/test/capture-photo] sent to {sent} socket(s), request_id={request_id}")
+    return {"ok": True, "request_id": request_id, "sockets": sent}
+
+
+@app.post("/test/video/{state}")
+async def test_video(state: str):
+    """Toggle the glasses video stream: state = 'on' or 'off' (PROTOCOL §1.1)."""
+    if state not in ("on", "off"):
+        return JSONResponse({"ok": False, "error": "state must be 'on' or 'off'"}, status_code=400)
+    msg = json.dumps({"type": f"video_{state}"})
+    sent = await _broadcast_text(PUBLISH_SOCKETS, msg)
+    print(f"[/test/video/{state}] sent to {sent} socket(s)")
+    return {"ok": True, "state": state, "sockets": sent}
+
+
+@app.post("/test/beep")
+async def test_beep(seconds: float = 1.0, freq: float = 440.0):
+    """Play a sine beep through the glasses speaker via /agent-audio downlink.
+
+    Int16 LE mono PCM @ 24kHz (PROTOCOL §1.3). Proves you can hear the agent.
+    """
+    sample_rate = 24000
+    n = int(sample_rate * seconds)
+    amp = 12000  # well under the Int16 ceiling (32767)
+    samples = [
+        int(amp * math.sin(2 * math.pi * freq * i / sample_rate)) for i in range(n)
+    ]
+    pcm = struct.pack("<%dh" % len(samples), *samples)
+    sent = await _broadcast_bytes(AGENT_AUDIO_SOCKETS, pcm)
+    print(f"[/test/beep] {seconds}s @ {freq}Hz -> {sent} socket(s) ({len(pcm)} bytes)")
+    return {"ok": True, "sockets": sent, "bytes": len(pcm)}
+
+
+async def _broadcast_text(sockets: set[WebSocket], text: str) -> int:
+    sent = 0
+    for ws in list(sockets):
+        try:
+            await ws.send_text(text)
+            sent += 1
+        except Exception:
+            sockets.discard(ws)
+    return sent
+
+
+async def _broadcast_bytes(sockets: set[WebSocket], data: bytes) -> int:
+    sent = 0
+    for ws in list(sockets):
+        try:
+            await ws.send_bytes(data)
+            sent += 1
+        except Exception:
+            sockets.discard(ws)
+    return sent
 
 
 # --- Video uplink -----------------------------------------------------------
@@ -39,6 +113,7 @@ async def root():
 @app.websocket("/publish")
 async def publish(ws: WebSocket):
     await ws.accept()
+    PUBLISH_SOCKETS.add(ws)
     frames = 0
     print("[/publish] connected")
     try:
@@ -58,6 +133,8 @@ async def publish(ws: WebSocket):
                 # Send them with: await ws.send_text(json.dumps({...}))
     except WebSocketDisconnect:
         print(f"[/publish] disconnected after {frames} frames")
+    finally:
+        PUBLISH_SOCKETS.discard(ws)
 
 
 # --- Audio uplink -----------------------------------------------------------
@@ -92,6 +169,7 @@ async def publish_audio(ws: WebSocket):
 @app.websocket("/agent-audio")
 async def agent_audio(ws: WebSocket):
     await ws.accept()
+    AGENT_AUDIO_SOCKETS.add(ws)
     print("[/agent-audio] connected")
     # Announce the format the app should expect.
     await ws.send_text(json.dumps({"sampleRate": 24000}))
@@ -105,6 +183,8 @@ async def agent_audio(ws: WebSocket):
             await ws.receive()
     except WebSocketDisconnect:
         print("[/agent-audio] disconnected")
+    finally:
+        AGENT_AUDIO_SOCKETS.discard(ws)
 
 
 # --- Photo ------------------------------------------------------------------

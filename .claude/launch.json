@@ -7,6 +7,20 @@
       "runtimeArgs": ["main:app", "--host", "0.0.0.0", "--port", "8000", "--app-dir", "server"],
       "port": 8000,
       "env": { "PYTHONUNBUFFERED": "1" }
+    },
+    {
+      "name": "hackathon-server",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "--directory", "yc-voice-agents-hackathon/server", "main.py"],
+      "port": 7860,
+      "env": { "PYTHONUNBUFFERED": "1" }
+    },
+    {
+      "name": "courtline-frontend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "frontend", "start"],
+      "port": 3000,
+      "env": { "BROWSER": "none", "PORT": "3000" }
     }
   ]
 }

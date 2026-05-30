@@ -34,6 +34,9 @@ class CourtLineState:
 
     agent_decisions: list[AgentDecision] = field(default_factory=list)
 
+    # Emotion alerts queued by vision.py, drained into LLM context on each user turn
+    pending_emotion_alerts: list = field(default_factory=list)
+
     # WebSocket subscribers for live push
     transcript_subscribers: list = field(default_factory=list)
     decision_subscribers: list = field(default_factory=list)
@@ -71,6 +74,19 @@ class CourtLineState:
         )
         self.agent_decisions.append(d)
         return d
+
+    def reset(self):
+        """Clear all session content for a fresh brief upload. Preserves live
+        WebSocket connections and pipeline handles (context/worker/loop)."""
+        self.case_brief = ""
+        self.running_transcript = []
+        self.agent_decisions = []
+        self.evidence = []
+        self.latest_vision_result = ""
+        self.latest_emotion = ""
+        self.latest_emotion_confidence = 0
+        self.latest_emotion_flagged = False
+        self.pending_emotion_alerts = []
 
 
 # Singleton — import `state` everywhere

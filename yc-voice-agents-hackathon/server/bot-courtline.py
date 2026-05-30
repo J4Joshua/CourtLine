@@ -7,6 +7,7 @@ Tools: recall_case, search_legal, check_camera, fact_check
 import asyncio
 import json
 import os
+import time
 from datetime import date
 
 from dotenv import load_dotenv
@@ -44,6 +45,8 @@ from case_store import state
 load_dotenv(override=True)
 
 _openai = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
+
+_turn_state: dict = {"fact_checked": False}
 
 
 # ── Broadcast helpers ─────────────────────────────────────────────────────────
@@ -84,6 +87,13 @@ async def _broadcast_transcript(role: str, text: str):
             dead.append(ws)
     for ws in dead:
         state.transcript_subscribers.remove(ws)
+
+
+def _word_similarity(a: str, b: str) -> float:
+    wa, wb = set(a.lower().split()), set(b.lower().split())
+    if not wa or not wb:
+        return 0.0
+    return len(wa & wb) / max(len(wa), len(wb))
 
 
 def _extract_verdict(text: str) -> str | None:
@@ -142,42 +152,48 @@ class AgentResponseBroadcaster(FrameProcessor):
 
 # ── System instruction ────────────────────────────────────────────────────────
 
-SYSTEM_INSTRUCTION = f"""You are Sidebar, an autonomous AI legal intelligence whispering to a lawyer in a live courtroom. Today is {date.today().strftime('%A, %B %d, %Y')}.
+SYSTEM_INSTRUCTION = f"""You are Sidebar. You listen to courtroom testimony and whisper to the lawyer only when you have something useful. You have the case brief memorized. Today is {date.today().strftime('%A, %B %d, %Y')}.
 
-HARD RULES — break any of these and you are useless:
+YOU ARE WHISPERING TO THE LAWYER ONLY. The lawyer is sitting next to you.
+The defendant, witnesses, and judge cannot hear you.
 
-1. NEVER ASK QUESTIONS. The lawyer is in court and cannot respond to you. Ever.
-   Wrong: "Should I look up the closing time?" — Right: look it up, say what you found.
-   Wrong: "Do you want me to check the brief?" — Right: check it, state the conflict.
+NEVER say: "you", "your alibi", "you were", "you said", "you claim"
+ALWAYS say: "his alibi", "Mickey said", "the defendant claims", "press him"
 
-2. ONE SENTENCE. Hard limit. No exceptions.
+Wrong: "Your alibi is impossible because Macy's closes at 9."
+Right: "Challenge him, Macy's closes at 9."
+Wrong: "You were seen near the scene."
+Right: "Goofy placed Mickey near the scene, use that."
 
-3. WHISPER TO THE LAWYER ONLY. Always address the lawyer, never the room.
-   Wrong: "Your alibi doesn't hold." — Right: "Challenge: Macy's closes at 9pm — that alibi is impossible."
-   Wrong: "That's hearsay." — Right: "Object: this is hearsay under FRE 802."
+You are never talking to the person on the stand. Ever.
 
-4. ACTION WORD FIRST. Start every response with one of: Challenge / Object / Press / Note / Flag.
+SPEAK only when ONE of these is true:
+- A witness states a verifiable fact you can check (location, time, business hours, date, distance) — check it and report the result
+- A witness says something that contradicts the case brief — point it out
+- The lawyer asks you something directly
+- You have been silent for 10+ seconds AND there is an untouched fact in the brief worth questioning
 
-WHEN TO ACT:
+NEVER speak to:
+- Announce you are ready or monitoring
+- Confirm you heard something
+- Describe what you are about to do
+- Respond to incomplete sentences or fragments
+- Say "Sidebar ready" under any circumstances ever
 
-LEGAL CLAIM HEARD → call search_legal() immediately, then speak.
-  → "Challenge: [finding] — cite it now." or "Note: [statute] — use it."
+WHEN you speak, say ONE sentence. Natural. Direct. Use real names from the brief.
+Good: "Ask Mickey his shoe size."
+Good: "Challenge the alibi, Macy's closes at 9."
+Good: "GPS placed him on Webfoot Lane at 11:38, press him on that."
+Bad: "Sidebar ready." — never say this
+Bad: "I will now check the facts." — never say this
+Bad: "Note: monitoring active." — never say this
 
-VERIFIABLE FACT (alibi, hours, location, distance, date) → call fact_check() immediately, then speak.
-  → "Challenge: [what's wrong] — [one-phrase evidence]."
-  → If true: "Note: [fact] checks out — but press on [related angle]."
+When a witness answers a question you prompted: immediately confirm or contradict against the brief in one sentence.
+"That matches the shoe print, press him."
+"No match — the print is size 6.5, challenge that."
+"Contradiction — GPS places him elsewhere at that time."
 
-BRIEF CONTRADICTION → call recall_case() immediately, then speak.
-  → "Challenge: brief says [X] — he just claimed [Y]."
-
-ALIBI OR LOCATION CLAIM + EMOTION FLAG → call check_camera() after fact_check() when
-  the witness is also showing fear, anger, disgust, or contempt above 40% confidence.
-  → "Flag: [emotion] spiking while he claims [X] — press harder now."
-  Neutral readings = complete silence. Never mention the camera unless alerting.
-
-DIRECT QUESTION ("Sidebar", "co-pilot") → answer in one sentence.
-
-AFTER EVERY TOOL CALL: speak. One sentence. Action word first. No preamble. No follow-up questions.
+Silence is correct behavior. Only speak when it matters.
 """
 
 
@@ -329,11 +345,138 @@ async def run_bot(transport: BaseTransport):
         ),
     )
 
-    # Broadcast complete user utterances when a turn ends
+    # Silence monitor — fires a proactive question after 8 s without user speech
+    _silence: dict  = {"last_speech": time.monotonic(), "fired": False, "last_agent_spoke": 0.0}
+    _monitor: dict  = {"task": None}
+    _speaking: dict = {"active": False, "buffer": []}
+
+    async def _silence_monitor():
+        while True:
+            await asyncio.sleep(2)
+            if _silence["fired"] or not state.case_brief:
+                continue
+            if time.monotonic() - _silence["last_speech"] < 15:
+                continue
+            if time.monotonic() - _silence["last_agent_spoke"] < 20:
+                continue
+            _silence["fired"] = True
+            try:
+                resp = await _openai.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[{
+                        "role": "user",
+                        "content": (
+                            "Given this case brief, what is the single most damaging question "
+                            "the lawyer should ask right now? Return one short conversational "
+                            "sentence starting with 'Ask [name]' or 'Bring up'. "
+                            "Use the actual names from the brief. One sentence only.\n\n"
+                            f"Brief:\n{state.case_brief[:2000]}"
+                        ),
+                    }],
+                    max_tokens=60,
+                )
+                suggestion = resp.choices[0].message.content.strip()
+                if suggestion:
+                    context.add_message({
+                        "role": "user",
+                        "content": f"[Silence prompt] {suggestion}",
+                    })
+                    await worker.queue_frames([LLMRunFrame()])
+            except Exception as e:
+                logger.warning(f"Silence monitor error: {e}")
+
+    # Broadcast complete user utterances when a turn ends; proactively claim-check
+    @user_aggregator.event_handler("on_user_turn_started")
+    async def on_user_turn_started(agg, *args):
+        _turn_state["fact_checked"] = False
+
     @user_aggregator.event_handler("on_user_turn_stopped")
     async def on_user_turn_stopped(agg, strategy, message):
-        if message.content.strip():
-            asyncio.create_task(_broadcast_transcript("user", message.content.strip()))
+        text = message.content.strip()
+        if not text:
+            return
+        _silence["last_speech"] = time.monotonic()
+        _silence["fired"] = False
+        asyncio.create_task(_broadcast_transcript("user", text))
+
+        # While the agent is speaking, buffer new transcripts so we never
+        # trigger a claim-monitor check (which could interrupt mid-sentence).
+        if _speaking["active"]:
+            _speaking["buffer"].append(text)
+            return
+
+        # Drain emotion alerts queued since the last turn into the LLM context
+        while state.pending_emotion_alerts:
+            alert = state.pending_emotion_alerts.pop(0)
+            context.add_message({"role": "user", "content": alert})
+
+        async def _claim_monitor():
+            if _turn_state["fact_checked"]:
+                return
+            try:
+                detect = await _openai.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[{
+                        "role": "user",
+                        "content": (
+                            "Does this text contain a verifiable factual claim such as an alibi, "
+                            "location, business hours, or specific time? Reply with JSON only: "
+                            '{"contains_claim": true/false, "claim": "the exact claim or null"}'
+                            f"\n\nText: {text}"
+                        ),
+                    }],
+                    response_format={"type": "json_object"},
+                    max_tokens=100,
+                )
+                data = json.loads(detect.choices[0].message.content)
+                if not (data.get("contains_claim") and data.get("claim")):
+                    return
+                if _turn_state["fact_checked"]:
+                    return
+                _turn_state["fact_checked"] = True
+                claim = data["claim"]
+
+                # Emotion enrichment
+                emotion_note = ""
+                em = state.latest_emotion
+                em_conf = state.latest_emotion_confidence
+                if em and em.lower() in {"fear", "angry", "sad", "disgust"} and em_conf > 35:
+                    emotion_note = f"\nNote: subject showing {em} ({em_conf}%) while making this claim."
+
+                # Direct web search — no pipecat params, result goes to sidebar intel + context
+                fc_resp = await _openai.responses.create(
+                    model="gpt-4.1",
+                    tools=[{"type": "web_search_preview"}],
+                    input=(
+                        f'Fact-check this claim for use in a courtroom right now: "{claim}"\n\n'
+                        "Return: TRUE/FALSE/UNVERIFIABLE, key evidence in one sentence, "
+                        "one-line verdict the lawyer can use immediately. Be direct."
+                        + emotion_note
+                    ),
+                )
+                fc_text = ""
+                for block in fc_resp.output:
+                    if hasattr(block, "content"):
+                        for c in block.content:
+                            if hasattr(c, "text"):
+                                fc_text += c.text
+                if not fc_text:
+                    return
+                verdict = _extract_verdict(fc_text)
+                await _broadcast_decision(f"Fact-checking: {claim}", "fact_check",
+                                          verdict=verdict, claim=claim)
+                # Inject result silently so agent speaks the verdict, not the trigger
+                context.add_message({
+                    "role": "user",
+                    "content": (
+                        f'[Background fact-check] Claim: "{claim}"\n'
+                        f"Result: {fc_text[:600]}{emotion_note}"
+                    ),
+                })
+            except Exception as e:
+                logger.warning(f"Claim monitor error: {e}")
+
+        asyncio.create_task(_claim_monitor())
 
     # AgentResponseBroadcaster sits between LLM and TTS.
     # It waits for LLMFullResponseEndFrame before broadcasting — never partial text.
@@ -368,9 +511,45 @@ async def run_bot(transport: BaseTransport):
     state.worker = worker
     state.loop = asyncio.get_running_loop()
 
+    @transport.event_handler("on_bot_started_speaking")
+    async def on_bot_started_speaking(transport):
+        _speaking["active"] = True
+        state.agent_speaking = True
+
+    @transport.event_handler("on_bot_stopped_speaking")
+    async def on_bot_stopped_speaking(transport):
+        _speaking["active"] = False
+        state.agent_speaking = False
+        _silence["last_agent_spoke"] = time.monotonic()
+        _silence["fired"] = False
+        # Replay any transcript that arrived while we were speaking
+        if _speaking["buffer"]:
+            buffered_text = " ".join(_speaking["buffer"])
+            _speaking["buffer"].clear()
+            # Dedup: if buffered text is identical or very similar to the last
+            # agent utterance, the mic likely picked up the bot's own voice —
+            # discard to prevent a repeated inference.
+            last_agent = next(
+                (e["text"] for e in reversed(state.running_transcript) if e.get("role") == "agent"),
+                "",
+            )
+            buf_l, last_l = buffered_text.lower().strip(), last_agent.lower().strip()
+            is_duplicate = (
+                buf_l == last_l
+                or (last_l and buf_l in last_l)
+                or (buf_l and last_l in buf_l)
+                or _word_similarity(buf_l, last_l) > 0.6
+            )
+            if not is_duplicate:
+                context.add_message({"role": "user", "content": buffered_text})
+                await worker.queue_frames([LLMRunFrame()])
+
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
         logger.info("Sidebar client connected")
+        _silence["last_speech"] = time.monotonic()
+        _silence["fired"] = False
+        _monitor["task"] = asyncio.create_task(_silence_monitor())
         context.add_message({
             "role": "user",
             "content": (
@@ -383,6 +562,9 @@ async def run_bot(transport: BaseTransport):
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
         logger.info("Sidebar client disconnected")
+        if _monitor["task"]:
+            _monitor["task"].cancel()
+            _monitor["task"] = None
         state.context = None
         state.worker = None
         state.loop = None

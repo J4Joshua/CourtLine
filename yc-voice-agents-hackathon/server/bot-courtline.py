@@ -14,13 +14,14 @@ Pipeline: Gradium STT → GPT-4.1 (OpenAI Responses API) → Gradium TTS
 import asyncio
 import json
 import os
+import queue as pyqueue
 from datetime import date
 
 from dotenv import load_dotenv
 from loguru import logger
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
 from pipecat.audio.vad.silero import SileroVADAnalyzer
-from pipecat.frames.frames import LLMRunFrame
+from pipecat.frames.frames import InputAudioRawFrame, LLMRunFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
@@ -302,9 +303,70 @@ async def run_bot(transport: BaseTransport):
         ),
     )
 
+    # ── Mac-microphone audio input (optional) ─────────────────────────────────
+    # When MAC_MIC_INPUT=1, capture THIS machine's microphone and feed it into
+    # the pipeline as the user-audio source. This is the glasses use case: the
+    # iOS app connects receive-only (WebRTC on iOS can't reliably capture the
+    # Bluetooth-HFP glasses mic), so the agent listens via the Mac while it
+    # speaks back over WebRTC to the glasses. No-op unless the flag is set, so
+    # the normal browser/WebRTC audio-in path is unaffected. PortAudio delivers
+    # blocks on its own thread; we hand them to the loop via a thread-safe queue.
+    _mic_enabled = os.getenv("MAC_MIC_INPUT") == "1"
+    _mic_queue: "pyqueue.Queue[bytes | None]" = pyqueue.Queue()
+    _mic_stream = None
+    _mic_task = None
+
+    def _mic_callback(indata, frames, time_info, status):
+        if status:
+            logger.warning(f"[mac-mic] stream status: {status}")
+        _mic_queue.put(bytes(indata))
+
+    async def _mic_pump():
+        loop = asyncio.get_event_loop()
+        n = 0
+        while True:
+            data = await loop.run_in_executor(None, _mic_queue.get)
+            if data is None:  # sentinel on disconnect
+                break
+            await worker.queue_frames(
+                [InputAudioRawFrame(audio=data, sample_rate=16000, num_channels=1)]
+            )
+            n += 1
+            if n == 1 or n % 100 == 0:
+                logger.info(f"[mac-mic] fed {n} chunks into the pipeline")
+
+    def _start_mic():
+        nonlocal _mic_stream, _mic_task
+        if not _mic_enabled or _mic_stream is not None:
+            return
+        try:
+            import sounddevice as sd  # lazy: only needed when MAC_MIC_INPUT=1
+
+            _mic_stream = sd.RawInputStream(
+                samplerate=16000, channels=1, dtype="int16",
+                blocksize=320, callback=_mic_callback,  # 20 ms @ 16 kHz
+            )
+            _mic_stream.start()
+            _mic_task = asyncio.create_task(_mic_pump())
+            logger.info("[mac-mic] capturing local microphone -> agent")
+        except Exception as e:
+            logger.error(f"[mac-mic] could not open microphone: {e}")
+
+    def _stop_mic():
+        nonlocal _mic_stream, _mic_task
+        if _mic_stream is not None:
+            _mic_stream.stop()
+            _mic_stream.close()
+            _mic_stream = None
+        _mic_queue.put(None)  # unblock _mic_pump
+        if _mic_task is not None:
+            _mic_task.cancel()
+            _mic_task = None
+
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
         logger.info("CourtLine client connected")
+        _start_mic()
         context.add_message(
             {
                 "role": "user",
@@ -319,6 +381,7 @@ async def run_bot(transport: BaseTransport):
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
         logger.info("CourtLine client disconnected")
+        _stop_mic()
         await worker.cancel()
 
     runner = WorkerRunner(handle_sigint=False)

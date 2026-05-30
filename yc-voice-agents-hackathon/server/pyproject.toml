@@ -12,6 +12,7 @@ dependencies = [
     "python-multipart>=0.0.9",
     "fer>=22.5.0",
     "opencv-python-headless>=4.8.0",
+    "sounddevice>=0.5",  # optional Mac-microphone input (MAC_MIC_INPUT=1)
 ]
 
 [dependency-groups]

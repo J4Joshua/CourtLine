@@ -21,3 +21,10 @@ Thumbs.db
 
 # Locks (keep pyproject.toml, exclude uv.lock if desired)
 # uv.lock
+
+# Xcode / iOS (ios/)
+xcuserdata/
+*.xcuserstate
+DerivedData/
+.swiftpm/
+ios/**/.build/

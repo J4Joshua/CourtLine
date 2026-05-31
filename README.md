@@ -27,6 +27,8 @@ Built in one day at the YC Voice Agents Hackathon, May 30 2026.
 
 ## 2. Demo Video
 
+https://youtu.be/raY3BKP0-3g
+
 [![Sidebar Demo](https://img.youtube.com/vi/raY3BKP0-3g/0.jpg)](https://youtu.be/raY3BKP0-3g)
 
 ---

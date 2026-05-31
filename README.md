@@ -51,19 +51,93 @@ explicit prompting.
 **Cekura**
 We used Cekura to evaluate Sidebar across adversarial courtroom scenarios — 
 simulating hostile witnesses, prepared alibis, and procedural objections. 
-The eval runs surfaced two key failure modes we then fixed: the agent was 
-intervening too often on non-actionable statements, and it was sometimes 
-narrating its own actions out loud instead of just delivering the verdict. 
-We iterated on the system prompt using Cekura transcripts as ground truth 
-until the agent reliably stayed silent when nothing was actionable and spoke 
-only when it had something the lawyer could use. The transcript scoring was 
-particularly useful — seeing exactly where the agent broke character helped 
-us write much tighter behavioral rules than we would have caught through 
-manual testing alone.
+Crucially, Cekura tested the *deployed* agent, not a local mock: it placed 
+real WebRTC calls into our live Pipecat Cloud deployment (see section 4) and 
+scored the actual production pipeline end-to-end. The eval runs surfaced two 
+key failure modes we then fixed: the agent was intervening too often on 
+non-actionable statements, and it was sometimes narrating its own actions out 
+loud instead of just delivering the verdict. We iterated on the system prompt 
+using Cekura transcripts as ground truth until the agent reliably stayed silent 
+when nothing was actionable and spoke only when it had something the lawyer 
+could use. The transcript scoring was particularly useful — seeing exactly 
+where the agent broke character helped us write much tighter behavioral rules 
+than we would have caught through manual testing alone.
 
 ---
 
-## 4. What we built during the hackathon
+## 4. Deployment & the Cekura evaluation loop
+
+This is where most of our engineering depth went: shipping the agent to a real 
+cloud endpoint and then beating on it with automated adversarial evals until it 
+behaved.
+
+### Deploying to Pipecat Cloud
+
+The agent (`bot-courtline.py`) is containerized and deployed to **Pipecat Cloud** 
+as a named agent. Our deploy config:
+
+```toml
+# pcc-deploy.toml
+agent_name    = "courtline"
+secret_set    = "courtline-secrets"
+agent_profile = "agent-1x"
+
+[scaling]
+min_agents = 1   # one warm agent always ready — no cold start mid-hearing
+```
+
+We build on top of `dailyco/pipecat-base`, with `uv sync --locked` for 
+reproducible dependency installs, and map `bot-courtline.py → bot.py` so the 
+base image's `bot()` entrypoint picks up our pipeline. API keys (Nemotron, 
+OpenAI, Gradium) are injected at runtime via the `courtline-secrets` secret set 
+rather than baked into the image. Deploys are a single `pcc deploy`.
+
+Because the agent is registered as `courtline`, Pipecat Cloud exposes a public 
+session-start endpoint:
+
+```
+POST https://api.pipecat.daily.co/v1/public/courtline/start
+Authorization: Bearer <PIPECAT_API_KEY>
+Content-Type: application/json
+
+{ "createDailyRoom": true }
+```
+
+Each call spins up an isolated agent instance, provisions a WebRTC room, and 
+returns connection credentials. Our React frontend and the Cekura test harness 
+both connect through this same endpoint — so what we test is exactly what we ship.
+
+### Closing the loop with Cekura
+
+Having a stable public endpoint is what made rigorous evaluation possible. 
+Instead of one of us manually role-playing a witness over and over, we pointed 
+**Cekura** at `https://api.pipecat.daily.co/v1/public/courtline/start` and let 
+it run scripted adversarial courtroom conversations against the live agent — at 
+scale, repeatably, on the production pipeline.
+
+The loop we ran:
+
+1. **Define scenarios** — hostile witnesses, rehearsed alibis with planted 
+   factual errors, rapid-fire procedural objections, and long stretches where 
+   nothing actionable is said (to test that the agent stays *quiet*).
+2. **Run against the deployed endpoint** — Cekura drives full WebRTC sessions 
+   into the `courtline` agent and records every turn.
+3. **Score the transcripts** — pinpointing exactly where the agent spoke at the 
+   wrong time, over-intervened, or narrated its own tool calls.
+4. **Fix and redeploy** — tighten the system prompt / claim-monitor thresholds, 
+   `pcc deploy`, and re-run the same suite to confirm the regression was gone 
+   without introducing new ones.
+
+Two concrete wins came directly out of this loop: we cut spurious interventions 
+on non-actionable statements, and we eliminated the "I'll check that for you" 
+self-narration so the agent now delivers only the verdict ("Macy's closes at 9, 
+challenge the alibi"). Both were failure modes we would almost certainly have 
+missed with ad-hoc manual testing — Cekura caught them because it could run the 
+same hostile scenario against the real deployment dozens of times in a row.
+
+---
+
+## 5. What we built during the hackathon
 
 Everything. Built from scratch on May 30 2026 during the hackathon:
 
@@ -82,7 +156,7 @@ Everything. Built from scratch on May 30 2026 during the hackathon:
 
 ---
 
-## 5. Tool feedback
+## 6. Tool feedback
 
 **NVIDIA Nemotron**
 The ASR is genuinely impressive — fast, accurate, handles courtroom vocabulary 
@@ -109,7 +183,7 @@ messages into an active pipeline from outside the frame processor chain.
 
 ---
 
-## 6. Tech stack
+## 7. Tech stack
 
 - **Orchestration:** Pipecat
 - **STT:** NVIDIA Nemotron ASR
@@ -120,3 +194,5 @@ messages into an active pipeline from outside the frame processor chain.
 - **Frontend:** React
 - **Backend:** FastAPI + Python
 - **Transport:** SmallWebRTC (local) / Twilio (telephony)
+- **Deployment:** Pipecat Cloud (`courtline` agent, public start endpoint at `api.pipecat.daily.co/v1/public/courtline/start`)
+- **Evaluation:** Cekura adversarial scenario testing against the live deployment

@@ -6,6 +6,9 @@ import EvidenceGraph from './EvidenceGraph';
 const API = 'http://localhost:7860';
 const WS_TRANSCRIPT = 'ws://localhost:7860/ws/transcript';
 const WS_DECISIONS  = 'ws://localhost:7860/ws/decisions';
+// Glasses-streaming server (server/main.py). The /viewer socket fans out the
+// live Ray-Ban JPEG frames to the browser.
+const RAYBAN_VIEWER = 'ws://localhost:8000/viewer';
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
 
@@ -265,25 +268,79 @@ function UploadBriefsPage({ caseInfo, onNext }) {
 // ── Camera panel ──────────────────────────────────────────────────────────────
 
 function CameraPanel({ visionResult, onVisionUpdate }) {
-  const videoRef  = useRef(null);
-  const canvasRef = useRef(null);
+  const videoRef     = useRef(null);
+  const imgRef       = useRef(null);
+  const canvasRef    = useRef(null);
+  const macStreamRef = useRef(null);
+  const objUrlRef    = useRef(null);
+  const [source,       setSource]       = useState('mac'); // 'mac' | 'rayban'
   const [streaming,    setStreaming]    = useState(false);
+  const [raybanStatus, setRaybanStatus] = useState('connecting'); // 'connecting' | 'live' | 'error'
   const [emotionBadge, setEmotionBadge] = useState(null);
 
+  // ── Mac webcam ────────────────────────────────────────────────────────────
   const enableCamera = useCallback(() => {
     navigator.mediaDevices.getUserMedia({ video: true, audio: false })
-      .then((stream) => { if (videoRef.current) { videoRef.current.srcObject = stream; setStreaming(true); } })
+      .then((stream) => {
+        macStreamRef.current = stream;
+        if (videoRef.current) { videoRef.current.srcObject = stream; setStreaming(true); }
+      })
       .catch((err) => console.error('Camera:', err));
   }, []);
 
-  const captureFrame = useCallback(() => {
-    if (!videoRef.current || !canvasRef.current) return null;
-    const cv = canvasRef.current;
-    cv.width  = videoRef.current.videoWidth  || 640;
-    cv.height = videoRef.current.videoHeight || 480;
-    cv.getContext('2d').drawImage(videoRef.current, 0, 0);
-    return cv.toDataURL('image/jpeg', 0.7).split(',')[1];
+  const stopMacStream = useCallback(() => {
+    macStreamRef.current?.getTracks().forEach((t) => t.stop());
+    macStreamRef.current = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
   }, []);
+
+  // Switching source tears down the previous one and resets per-source UI state.
+  const switchSource = useCallback((next) => {
+    setSource((cur) => {
+      if (next === cur) return cur;
+      setStreaming(false);
+      setEmotionBadge(null);
+      if (next === 'rayban') stopMacStream();   // leaving Mac → release the webcam
+      return next;
+    });
+  }, [stopMacStream]);
+
+  // ── Ray-Ban glasses feed (server/main.py /viewer) ─────────────────────────
+  useEffect(() => {
+    if (source !== 'rayban') return;
+    setRaybanStatus('connecting');
+    const ws = new WebSocket(RAYBAN_VIEWER);
+    ws.binaryType = 'arraybuffer';
+    ws.onmessage = (e) => {
+      if (!(e.data instanceof ArrayBuffer)) return; // ignore any control text
+      const url = URL.createObjectURL(new Blob([e.data], { type: 'image/jpeg' }));
+      if (objUrlRef.current) URL.revokeObjectURL(objUrlRef.current); // no per-frame leak
+      objUrlRef.current = url;
+      if (imgRef.current) imgRef.current.src = url;
+      setRaybanStatus('live');
+      setStreaming(true);
+    };
+    ws.onerror = () => setRaybanStatus('error');
+    ws.onclose = () => setStreaming(false);
+    return () => {
+      ws.close();
+      if (objUrlRef.current) { URL.revokeObjectURL(objUrlRef.current); objUrlRef.current = null; }
+    };
+  }, [source]);
+
+  // Release the webcam if the panel unmounts mid-session.
+  useEffect(() => () => stopMacStream(), [stopMacStream]);
+
+  const captureFrame = useCallback(() => {
+    const cv = canvasRef.current;
+    const el = source === 'rayban' ? imgRef.current : videoRef.current;
+    if (!cv || !el) return null;
+    const w = (source === 'rayban' ? el.naturalWidth  : el.videoWidth)  || 640;
+    const h = (source === 'rayban' ? el.naturalHeight : el.videoHeight) || 480;
+    cv.width = w; cv.height = h;
+    cv.getContext('2d').drawImage(el, 0, 0, w, h);
+    return cv.toDataURL('image/jpeg', 0.7).split(',')[1];
+  }, [source]);
 
   useEffect(() => {
     if (!streaming) return;
@@ -307,9 +364,19 @@ function CameraPanel({ visionResult, onVisionUpdate }) {
 
   return (
     <div className="camera-block">
+      <div className="cam-source-toggle">
+        <button className={source === 'mac'    ? 'cam-src-active' : ''} onClick={() => switchSource('mac')}>Mac Camera</button>
+        <button className={source === 'rayban' ? 'cam-src-active' : ''} onClick={() => switchSource('rayban')}>Ray-Ban Glasses</button>
+      </div>
       <div className="webcam-wrapper">
-        <video ref={videoRef} autoPlay playsInline muted />
-        {!streaming && <button className="btn-enable-camera" onClick={enableCamera}>Enable Camera</button>}
+        <video ref={videoRef} autoPlay playsInline muted style={{ display: source === 'mac' ? 'block' : 'none' }} />
+        <img ref={imgRef} alt="Ray-Ban glasses feed" style={{ display: source === 'rayban' ? 'block' : 'none', width: '100%', height: '100%', objectFit: 'cover' }} />
+        {source === 'mac'    && !streaming && <button className="btn-enable-camera" onClick={enableCamera}>Enable Camera</button>}
+        {source === 'rayban' && raybanStatus !== 'live' && (
+          <div className="rayban-status">
+            {raybanStatus === 'error' ? 'Cannot reach glasses server (:8000)' : 'Waiting for glasses video…'}
+          </div>
+        )}
       </div>
       <canvas ref={canvasRef} style={{ display: 'none' }} />
       {emotionBadge ? (

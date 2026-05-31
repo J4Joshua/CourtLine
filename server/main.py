@@ -36,6 +36,14 @@ PHOTOS_DIR.mkdir(exist_ok=True)
 PUBLISH_SOCKETS: set[WebSocket] = set()
 AGENT_AUDIO_SOCKETS: set[WebSocket] = set()
 
+# Browser viewers (e.g. the React frontend's "Ray-Ban Glasses" camera source).
+# Each binary JPEG frame the glasses publish on /publish is fanned out to these
+# sockets, so the web UI can render the live glasses feed. LATEST_FRAME lets a
+# newly-connected viewer paint something immediately instead of waiting for the
+# next frame.
+VIEWER_SOCKETS: set[WebSocket] = set()
+LATEST_FRAME: bytes | None = None
+
 
 @app.get("/")
 async def root():
@@ -123,6 +131,10 @@ async def publish(ws: WebSocket):
                 raise WebSocketDisconnect(msg.get("code", 1000))
             if msg.get("bytes") is not None:
                 frames += 1
+                # Relay the JPEG to any browser viewers and remember the latest.
+                global LATEST_FRAME
+                LATEST_FRAME = msg["bytes"]
+                await _broadcast_bytes(VIEWER_SOCKETS, msg["bytes"])
                 if frames % 24 == 0:  # ~once per second at 24fps
                     print(f"[/publish] {frames} video frames "
                           f"(last {len(msg['bytes'])} bytes)")
@@ -137,6 +149,34 @@ async def publish(ws: WebSocket):
         print(f"[/publish] disconnected after {frames} frames")
     finally:
         PUBLISH_SOCKETS.discard(ws)
+
+
+# --- Video viewer (server -> browser) ---------------------------------------
+# ws /viewer : fan-out of the glasses' JPEG frames to browser clients. NOT part
+# of the app<->server protocol — it's how the web UI renders the live glasses
+# feed (the "Ray-Ban Glasses" camera source). On connect we ask any connected
+# glasses to (re)enable video so the viewer isn't blank, and prime with the most
+# recent frame.
+@app.websocket("/viewer")
+async def viewer(ws: WebSocket):
+    await ws.accept()
+    VIEWER_SOCKETS.add(ws)
+    print(f"[/viewer] browser connected ({len(VIEWER_SOCKETS)} viewer(s))")
+    await _broadcast_text(PUBLISH_SOCKETS, json.dumps({"type": "video_on"}))
+    if LATEST_FRAME is not None:
+        try:
+            await ws.send_bytes(LATEST_FRAME)
+        except Exception:
+            VIEWER_SOCKETS.discard(ws)
+    try:
+        while True:
+            msg = await ws.receive()
+            if msg["type"] == "websocket.disconnect":
+                raise WebSocketDisconnect(msg.get("code", 1000))
+    except WebSocketDisconnect:
+        print("[/viewer] browser disconnected")
+    finally:
+        VIEWER_SOCKETS.discard(ws)
 
 
 # --- Audio uplink -----------------------------------------------------------

@@ -143,6 +143,8 @@ A real cross-examination drags on, the claims pile up, and the agent has to stay
 sharp the entire time — eight straight minutes is what surfaced the bug a 
 30-second test never would.
 
+![Cekura eval run — "Alibi, Contract Claim, Address", a 7:42 cross-examination that failed 3 of 7 rubric checks](docs/images/cekura-eval-alibi-contract-address.png)
+
 Sidebar handled most of it. It pressed hard on the alibi and kept challenging 
 the timeline (00:13, 01:57, 02:46), and it correctly noted the witness's stated 
 address at 5 Wall Street (01:24, 01:40). But buried in the middle of a long 

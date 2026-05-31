@@ -22,7 +22,7 @@ Built for the YC Voice Agents Hackathon, May 30 2026.
 
 ## 2. Demo Video
 
-[INSERT UNDER 60 SECOND DEMO LINK HERE]
+https://youtu.be/raY3BKP0-3g
 
 ---
 

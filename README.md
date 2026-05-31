@@ -133,6 +133,36 @@ sure the fix stuck. That loop is how we caught the over-intervention and the
 have missed by hand, but obvious once we could run the same hostile scenario 
 against the real deployment a dozen times in a row.
 
+**A test that actually fixed the agent.** One of our most useful runs was a 
+scenario we called *"Alibi, Contract Claim, Address"* — and the thing that made 
+it valuable is that it wasn't a quick ping. Cekura ran a **full 7:42 (~8 minute) 
+cross-examination** end-to-end against the live `courtline` agent, with a 
+testing-agent witness who threw three different things at us across the whole 
+conversation: a gym alibi, a legal claim about a contract, and a home address. 
+A real cross-examination drags on, the claims pile up, and the agent has to stay 
+sharp the entire time — eight straight minutes is what surfaced the bug a 
+30-second test never would.
+
+Sidebar handled most of it. It pressed hard on the alibi and kept challenging 
+the timeline (00:13, 01:57, 02:46), and it correctly noted the witness's stated 
+address at 5 Wall Street (01:24, 01:40). But buried in the middle of a long 
+answer, the witness slipped in a legal claim:
+
+> **Testing Agent (00:30):** "...the signed contract does not legally cover any 
+> actions taken outside of business hours."
+
+That directly contradicted the case brief — and the agent let it go by without 
+challenging it. Cekura flagged the run as a **Failure (3 of 7 rubric checks 
+failed)**: the agent never pushed back on the contract claim, and it also went 
+silent for more than ten seconds at a few points deep in the call (02:13, 03:15, 
+04:49), with average latency around 2995ms. The lesson was specific: our claim 
+monitor was tuned to catch *location and time* alibis but was effectively blind 
+to *legal/contractual* assertions, and the longer the conversation ran, the more 
+likely it was to stall. We broadened the claim detector to treat 
+contradicts-the-brief legal statements as first-class verifiable claims, tightened 
+the silence handling, redeployed, and re-ran the same eight-minute scenario until 
+it passed clean.
+
 ---
 
 ## 5. What we built during the hackathon

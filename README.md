@@ -6,6 +6,13 @@ Sidebar is a real-time AI legal co-pilot that listens to live courtroom
 testimony and whispers actionable intelligence to the lawyer — hands-free, 
 eyes-forward, no phone required.
 
+The lawyer wears a pair of Meta Ray-Ban glasses, which is what makes this 
+work in a real courtroom — the audio stays private in the lawyer's ear, and 
+the video stream Sidebar analyzes comes straight from the glasses' point of 
+view, so the lawyer is literally looking at the witness while the agent reads 
+the same scene. (We've left the glasses POV stream out of the demo video for 
+time, but it's the centerpiece of the live demo.)
+
 The lawyer loads a case brief before the hearing. During testimony, Sidebar 
 continuously monitors everything said, automatically fact-checks claims 
 against real-world data, cross-references testimony against the brief, 

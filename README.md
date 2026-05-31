@@ -6,6 +6,13 @@ Sidebar is a real-time AI legal co-pilot that listens to live courtroom
 testimony and whispers actionable intelligence to the lawyer — hands-free, 
 eyes-forward, no phone required.
 
+The lawyer wears a pair of Meta Ray-Ban glasses, which is what makes this 
+work in a real courtroom — the audio stays private in the lawyer's ear, and 
+the video stream Sidebar analyzes comes straight from the glasses' point of 
+view, so the lawyer is literally looking at the witness while the agent reads 
+the same scene. (We've left the glasses POV stream out of the demo video for 
+time, but it's the centerpiece of the live demo.)
+
 The lawyer loads a case brief before the hearing. During testimony, Sidebar 
 continuously monitors everything said, automatically fact-checks claims 
 against real-world data, cross-references testimony against the brief, 
@@ -63,22 +70,72 @@ is detected — bypassing the LLM's hesitation. This hybrid approach
 being more reliable than either alone.
 
 **Cekura**
-We used Cekura to evaluate Sidebar across adversarial courtroom 
-scenarios — simulating hostile witnesses, prepared alibis, and 
-procedural objections. The eval runs surfaced two key failure modes 
-we then fixed: the agent was intervening too often on non-actionable 
-statements, and it was sometimes narrating its own actions out loud 
-instead of just delivering the verdict. We iterated on the system 
-prompt using Cekura transcripts as ground truth until the agent 
-reliably stayed silent when nothing was actionable and spoke only 
-when it had something the lawyer could use. The transcript scoring 
-was particularly useful — seeing exactly where the agent broke 
-character helped us write much tighter behavioral rules than we 
-would have caught through manual testing alone.
+We used Cekura to evaluate Sidebar across adversarial courtroom scenarios — 
+simulating hostile witnesses, prepared alibis, and procedural objections. 
+Crucially, Cekura tested the *deployed* agent, not a local mock: it placed 
+real WebRTC calls into our live Pipecat Cloud deployment (see section 4) and 
+scored the actual production pipeline end-to-end. The eval runs surfaced two 
+key failure modes we then fixed: the agent was intervening too often on 
+non-actionable statements, and it was sometimes narrating its own actions out 
+loud instead of just delivering the verdict. We iterated on the system prompt 
+using Cekura transcripts as ground truth until the agent reliably stayed silent 
+when nothing was actionable and spoke only when it had something the lawyer 
+could use. The transcript scoring was particularly useful — seeing exactly 
+where the agent broke character helped us write much tighter behavioral rules 
+than we would have caught through manual testing alone.
 
 ---
 
-## 4. What we built during the hackathon
+## 4. Deploying to the cloud and testing it with Cekura
+
+We didn't want Sidebar to only run on a laptop on the demo table, so we 
+deployed the whole agent to Pipecat Cloud and ran it as a real hosted 
+service. We containerized `bot-courtline.py` on top of `dailyco/pipecat-base`, 
+locked our dependencies with `uv sync --locked` for reproducible builds, and 
+shipped it with a one-line `pcc deploy` using this config:
+
+```toml
+# pcc-deploy.toml
+agent_name    = "courtline"
+secret_set    = "courtline-secrets"
+agent_profile = "agent-1x"
+
+[scaling]
+min_agents = 1   # one warm agent always ready — no cold start mid-hearing
+```
+
+We kept one agent always warm (`min_agents = 1`) so there's no cold start in 
+the middle of a hearing, and we inject the Nemotron, OpenAI, and Gradium keys 
+at runtime through the `courtline-secrets` secret set instead of baking them 
+into the image. Because the agent is registered as `courtline`, Pipecat Cloud 
+gives us a public endpoint to start a session:
+
+```
+POST https://api.pipecat.daily.co/v1/public/courtline/start
+```
+
+Every call to it spins up an isolated agent, provisions a WebRTC room, and 
+hands back connection credentials. The nice part is that both our React 
+frontend and our tests hit the exact same endpoint — so what we test is 
+exactly what we ship.
+
+That's what let us actually use Cekura properly. Instead of one of us 
+role-playing a hostile witness over and over, we pointed Cekura straight at 
+`https://api.pipecat.daily.co/v1/public/courtline/start` and let it run 
+adversarial courtroom scenarios against the live agent — rehearsed alibis with 
+planted factual errors, rapid-fire objections, and long quiet stretches where 
+the right move is to say nothing. It would drive full WebRTC sessions into the 
+deployed `courtline` agent, record every turn, and score the transcripts so we 
+could see exactly where it spoke at the wrong time or narrated its own tool 
+calls. We'd fix the system prompt, redeploy, and re-run the same suite to make 
+sure the fix stuck. That loop is how we caught the over-intervention and the 
+"I'll check that for you" self-narration — failure modes we'd almost certainly 
+have missed by hand, but obvious once we could run the same hostile scenario 
+against the real deployment a dozen times in a row.
+
+---
+
+## 5. What we built during the hackathon
 
 Everything. Built from scratch on May 30 2026:
 
@@ -105,7 +162,7 @@ Everything. Built from scratch on May 30 2026:
 
 ---
 
-## 5. Tool feedback
+## 6. Tool feedback
 
 **NVIDIA Nemotron**
 ASR: genuinely strong. Fast, accurate on legal vocabulary, low latency — 
@@ -148,7 +205,7 @@ would save future builders significant debugging time.
 
 ---
 
-## 6. Tech stack
+## 7. Tech stack
 
 | Layer | Technology |
 |-------|-----------|
@@ -162,3 +219,5 @@ would save future builders significant debugging time.
 | Frontend | React |
 | Backend | FastAPI + Python |
 | Transport | SmallWebRTC |
+| Deployment | Pipecat Cloud (`courtline` agent, start endpoint `api.pipecat.daily.co/v1/public/courtline/start`) |
+| Evaluation | Cekura adversarial scenario testing against the live deployment |

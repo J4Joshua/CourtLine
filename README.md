@@ -28,7 +28,7 @@ intelligence layer.
 This reframes what voice agents are for. Not outbound calls. Not customer 
 service. A real-time human lifeline in the highest-stakes moments people face.
 
-Built in one day at the YC Voice Agents Hackathon, May 30 2026.
+Built in one day at the YC Voice Agents Hackathon, May 30 2026. Shortlisted as Top 7 Projects!!
 
 ---
 
